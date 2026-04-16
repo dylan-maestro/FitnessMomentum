@@ -6,10 +6,29 @@ Fitness Momentum is an offline-first workout tracker for Android and the web (PW
 
 The latest instructions for getting the app will always be reflected on the landing page at [fitmo.co](https://fitmo.co)
 
+### Native Android App Download
+#### Obtainium
+
+[<img src="https://raw.githubusercontent.com/ImranR98/Obtainium/refs/heads/main/assets/graphics/badge_obtainium.png)](https://obtainium.imranr.dev/"
+    alt="Get it on Obtainium"
+    height="80">](https://wiki.obtainium.imranr.dev/)
+
+- In the Obtainium app, tap "Add app", then fill **App Source URL**: `https://github.com/dylan-maestro/FitnessMomentum`
+- Tap install
+- If using AppVerifier, verify against:
+
+`com.fitnessmomentum`
+`A2:AF:7A:AD:4F:8B:E7:A6:8E:BB:55:AE:A9:8F:D8:B3:1C:A5:1D:1B:A9:87:C0:74:34:9B:F5:87:75:61:98:6B`
+
+#### Manual APK Install
+
+Download and install the latest version .apk file from [dylan-maestro/FitnessMomentum releases](https://github.com/dylan-maestro/FitnessMomentum/releases)
+
+
 ## Highlights
 
 - Continuous momentum score driven by logged workout volume
-- Weight-based and distance-based workouts, including bodyweight and laps-based modes
+- Weight-based, distance-based, and time-based workouts, including bodyweight and laps-based modes
 - Daily targets that account for decay, consistency, and progressive overload
 - Quick logging with same-day accumulation and immediate feedback
 - Local JSON export/import for backup and transfer
@@ -26,7 +45,7 @@ There is no cloud backend in this repository, and Android and browser/PWA instal
 
 The app currently ships with these starter templates:
 
-- Bodyweight: Pushups, Pull-Ups, Dips, Air Squats, Walking Lunges
+- Bodyweight: Pushups, Pull-Ups, Dips, Air Squats, Walking Lunges, Dead Hang, Plank
 - Strength: Barbell Squat, Bench Press, Overhead Press, Barbell Row
 - Endurance: Daily Walk, Running, Cycling, Swimming Laps, Open Water Swimming
 
@@ -36,8 +55,11 @@ Each workout builds momentum from logged volume:
 
 - Weight-based workouts use `reps x weight`
 - Distance-based workouts use total distance
+- Time-based workouts use `seconds x effective load`
 - Momentum decays over time, so missed sessions reduce it gradually instead of resetting a streak
 - Daily targets aim to cover decay and apply the configured progression rate
+
+Distance and time exercises use tuned momentum conversion factors so their scores stay in roughly the same range as weight-based movements for comparable effort. Time workouts now behave like weight-based work with `seconds` replacing `reps`, which means bodyweight and added load both affect momentum. As a rule of thumb for the initial time calibration, a `60` second dead hang is treated as roughly comparable to `10` pull-ups at the same bodyweight.
 
 In practice, the app answers a simple question each day: how much work would keep this habit moving forward?
 
