@@ -1,12 +1,10 @@
 import java.io.FileInputStream
 import java.util.Properties
-import com.android.build.OutputFile
-import com.android.build.gradle.api.ApkVariantOutput
+import com.android.build.api.variant.FilterConfiguration
 import org.gradle.api.GradleException
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
 }
 
 val frontendVersionName = run {
@@ -24,13 +22,13 @@ val frontendVersionName = run {
 
 android {
     namespace = "com.fitnessmomentum"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.fitnessmomentum"
         minSdk = 24
-        targetSdk = 34
-        versionCode = 10600
+        targetSdk = 36
+        versionCode = 10601
         versionName = frontendVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -69,44 +67,40 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
     
-    kotlinOptions {
-        jvmTarget = "1.8"
-    }
+}
 
-    applicationVariants.all {
-        if (buildType.name != "release") return@all
-
-        val flavorSegment = flavorName
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        val flavorSegment = variant.flavorName
             ?.takeIf { it.isNotBlank() }
             ?.let { "$it-" }
             ?: ""
 
         val appSlug = "fitness-momentum"
 
-        outputs
-            .filterIsInstance<ApkVariantOutput>()
-            .forEach { output ->
-                val abiFilter = output.filters
-                    .find { it.filterType == OutputFile.ABI }
+        variant.outputs.forEach { output ->
+            val abiFilter = output.filters
+                    .find { it.filterType == FilterConfiguration.FilterType.ABI }
                     ?.identifier
                     ?: "universal"
 
-                output.outputFileName =
-                    "${appSlug}-${flavorSegment}${buildType.name}-${abiFilter}.apk"
-            }
+            output.outputFileName.set(
+                "${appSlug}-${flavorSegment}${variant.buildType}-${abiFilter}.apk"
+            )
+        }
     }
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.11.0")
-    implementation("androidx.webkit:webkit:1.8.0")
+    implementation("androidx.core:core-ktx:1.18.0")
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("com.google.android.material:material:1.13.0")
+    implementation("androidx.webkit:webkit:1.15.0")
     
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation("androidx.test:runner:1.5.2")
-    androidTestImplementation("androidx.test:rules:1.5.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test:rules:1.7.0")
 }
 
 tasks.register<Exec>("buildFrontend") {
@@ -115,7 +109,7 @@ tasks.register<Exec>("buildFrontend") {
     
     workingDir = file("src/main/assets/app")
     
-    val isWindows = System.getProperty("os.name").toLowerCase().contains("windows")
+    val isWindows = System.getProperty("os.name").lowercase().contains("windows")
     val npmCmd = if (isWindows) "npm.cmd" else "npm"
     
     commandLine(npmCmd, "run", "build:android")
