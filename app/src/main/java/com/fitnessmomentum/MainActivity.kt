@@ -3,6 +3,7 @@ package com.fitnessmomentum
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.webkit.JavascriptInterface
@@ -13,6 +14,9 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -20,6 +24,7 @@ import java.io.OutputStreamWriter
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
+    private var latestSystemBarInsets = Insets.NONE
 
     // Import logic
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
@@ -66,12 +71,41 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         
         webView = WebView(this)
+        webView.setBackgroundColor(Color.parseColor("#F5F5F5"))
+        configureSystemBarInsets()
         configureWebView()
         
         setContentView(webView)
+        ViewCompat.requestApplyInsets(webView)
         
         // Load the local HTML file from assets
         webView.loadUrl("file:///android_asset/www/index.html")
+    }
+
+    private fun configureSystemBarInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(webView) { _, insets ->
+            latestSystemBarInsets = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            applySystemBarInsetsToPage()
+            insets
+        }
+    }
+
+    private fun applySystemBarInsetsToPage() {
+        val insets = latestSystemBarInsets
+        webView.evaluateJavascript(
+            """
+            (() => {
+              const root = document.documentElement;
+              root.style.setProperty('--android-safe-area-top', '${insets.top}px');
+              root.style.setProperty('--android-safe-area-right', '${insets.right}px');
+              root.style.setProperty('--android-safe-area-bottom', '${insets.bottom}px');
+              root.style.setProperty('--android-safe-area-left', '${insets.left}px');
+            })();
+            """.trimIndent(),
+            null
+        )
     }
 
     private fun configureWebView() {
@@ -100,6 +134,10 @@ class MainActivity : AppCompatActivity() {
 
         // Prevent navigation away from local files
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                applySystemBarInsetsToPage()
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
                 // Only allow loading local files
                 return if (url?.startsWith("file://") == true || url?.startsWith("http://localhost") == true) {

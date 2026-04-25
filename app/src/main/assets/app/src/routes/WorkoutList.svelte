@@ -301,7 +301,8 @@
     navigatorCards.find((card) => card.id === activeWorkoutId)?.stackRatio ?? 0.5;
 
   onMount(() => {
-    showWebAppBar = window.location.protocol !== 'file:';
+    // Keep the same top-level app chrome in both the PWA and Android WebView shell.
+    showWebAppBar = true;
 
     const handleWindowChange = () => {
       scheduleNavigatorRefresh();
@@ -654,7 +655,11 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: calc(0.35rem + env(safe-area-inset-top, 0px)) 1rem 0.35rem;
+    padding:
+      calc(0.35rem + var(--android-safe-area-top, env(safe-area-inset-top, 0px)))
+      calc(1rem + var(--android-safe-area-right, env(safe-area-inset-right, 0px)))
+      0.35rem
+      calc(1rem + var(--android-safe-area-left, env(safe-area-inset-left, 0px)));
     margin: -1rem -1rem 1rem;
     background: var(--color-primary);
     color: white;

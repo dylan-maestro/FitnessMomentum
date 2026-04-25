@@ -28,7 +28,7 @@ android {
         applicationId = "com.fitnessmomentum"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10601
+        versionCode = 10602
         versionName = frontendVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

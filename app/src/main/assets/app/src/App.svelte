@@ -66,7 +66,11 @@
 
   .app-container {
     min-height: 100vh;
-    padding: 1rem;
+    padding:
+      1rem
+      calc(1rem + var(--android-safe-area-right, env(safe-area-inset-right, 0px)))
+      calc(1rem + var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px)))
+      calc(1rem + var(--android-safe-area-left, env(safe-area-inset-left, 0px)));
     max-width: 600px;
     margin: 0 auto;
   }

@@ -93,12 +93,12 @@ fitness-momentum/
 
 ### Prerequisites
 
-- Node.js 18+ and npm
-- JDK 17+
+- Node.js 22+ and npm
+- JDK 21, or another JDK 17+ compatible with the Android Gradle Plugin
 - Android Studio plus Android SDK if you want to build the Android app
 - For Android builds, install at least:
-  - Android SDK Platform 34
-  - Android SDK Build-Tools 34.0.0
+  - Android SDK Platform 36
+  - Android SDK Build-Tools 36.0.0
   - Android SDK Platform-Tools
 
 ### Install Dependencies
@@ -152,10 +152,10 @@ For the closest match to the maintainer build process:
    - `npm ci` in `app/src/main/assets/app/`
    - `./gradlew`, not a system Gradle install
 2. Use the documented toolchain:
-   - Node.js 18+
-   - JDK 17
-   - Android SDK Platform 34
-   - Android SDK Build-Tools 34.0.0
+   - Node.js 22+
+   - JDK 21
+   - Android SDK Platform 36
+   - Android SDK Build-Tools 36.0.0
 3. Start from a clean checkout and run:
 
 ```bash
@@ -185,6 +185,14 @@ Release assets for Obtainium/Accrescent include checksums and machine-readable b
 ## Web Hosting
 
 The web target publishes from `app/src/main/assets/app/dist/` and can be deployed to any static host that supports SPA rewrites.
+
+## Android Maintenance TODOs
+
+The Android shell currently builds on the latest AGP/toolchain, but a few APIs in `MainActivity.kt` are intentionally left for a later cleanup pass:
+
+- TODO: Replace broad `file://` WebView access with `WebViewAssetLoader`. The current WebView loads `file:///android_asset/www/index.html` and enables `allowFileAccessFromFileURLs` plus `allowUniversalAccessFromFileURLs` so the bundled Svelte app can access local assets without CORS issues. Those settings are deprecated because broad file-origin access is easy to misuse. A future migration should serve the bundled assets from a scoped app origin such as `https://appassets.androidplatform.net/...`, then tighten file access settings and re-test offline startup, asset loading, backup export/import, and any JS bridge calls.
+- TODO: Remove obsolete WebView database storage configuration if it is not needed. `settings.databaseEnabled = true` is deprecated with the old Web SQL API. The app stores user data in `localStorage`, so `domStorageEnabled = true` is the setting that likely matters. Verify persistence across app restarts before removing the database setting.
+- TODO: Migrate back navigation from `onBackPressed()` to the modern back callback API. The current override sends Back to `webView.goBack()` when the WebView has history, otherwise it delegates to the Activity. Preserve that behavior with `onBackPressedDispatcher.addCallback(...)` and test both in-app WebView history and normal app exit behavior.
 
 ## Testing
 
