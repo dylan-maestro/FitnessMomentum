@@ -345,7 +345,7 @@
     }
 
     .help-header {
-      padding-top: calc(1rem + env(safe-area-inset-top, 0px));
+      padding-top: calc(1rem + var(--android-safe-area-top, env(safe-area-inset-top, 0px)));
     }
 
     .hero-grid {

@@ -186,15 +186,87 @@ Release assets for Obtainium/Accrescent include checksums and machine-readable b
 
 The web target publishes from `app/src/main/assets/app/dist/` and can be deployed to any static host that supports SPA rewrites.
 
-## Android Maintenance TODOs
+## Future Android Migration Cleanup
 
-The Android shell currently builds on the latest AGP/toolchain, but a few APIs in `MainActivity.kt` are intentionally left for a later cleanup pass:
+The Android shell includes a one-time localStorage migration bridge for users upgrading from the old `file:///android_asset/www/index.html` WebView origin to the `WebViewAssetLoader` origin at `https://appassets.androidplatform.net/assets/www/index.html`.
 
-- TODO: Replace broad `file://` WebView access with `WebViewAssetLoader`. The current WebView loads `file:///android_asset/www/index.html` and enables `allowFileAccessFromFileURLs` plus `allowUniversalAccessFromFileURLs` so the bundled Svelte app can access local assets without CORS issues. Those settings are deprecated because broad file-origin access is easy to misuse. A future migration should serve the bundled assets from a scoped app origin such as `https://appassets.androidplatform.net/...`, then tighten file access settings and re-test offline startup, asset loading, backup export/import, and any JS bridge calls.
-- TODO: Remove obsolete WebView database storage configuration if it is not needed. `settings.databaseEnabled = true` is deprecated with the old Web SQL API. The app stores user data in `localStorage`, so `domStorageEnabled = true` is the setting that likely matters. Verify persistence across app restarts before removing the database setting.
-- TODO: Migrate back navigation from `onBackPressed()` to the modern back callback API. The current override sends Back to `webView.goBack()` when the WebView has history, otherwise it delegates to the Activity. Preserve that behavior with `onBackPressedDispatcher.addCallback(...)` and test both in-app WebView history and normal app exit behavior.
+Keep this bridge until it is reasonable to assume active users have opened a migrated build at least once, or until backup/export instructions have been publicised clearly enough that users who skipped intermediate versions have a safe recovery path.
+
+Before removing the bridge:
+
+- Confirm at least one public Android release has shipped with the migration bridge.
+- Allow enough time for regular users to open the app after that release.
+- Mention backup/export in release notes before the bridge is removed, especially for users upgrading from older APKs.
+- Keep a copy of the last bridge-enabled APK available for manual recovery if practical.
+
+When it is safe to remove the bridge from `MainActivity.kt`:
+
+- Delete the legacy migration state fields and helper methods, including the code that loads `LEGACY_APP_URL`, reads old `localStorage`, and writes migrated values into the asset-loader origin.
+- Remove the temporary legacy `file://` allowlist path from WebView navigation.
+- Replace the startup load logic with the direct asset-loader URL again.
+- Replace the conditional file-access setup with the locked-down settings only.
+- Remove migration constants such as `LEGACY_APP_URL_PREFIX`, `LEGACY_APP_URL`, and `PREF_LEGACY_STORAGE_MIGRATED`.
+
+After cleanup, test a fresh install and an update from the last bridge-enabled release. Verify startup, workout persistence, export/import, back navigation, and offline launch.
 
 ## Testing
+
+### Local Android Emulator Testing
+
+For testing Android WebView changes locally, use the Pixel 9a device profile with the Android 16 / API 36 Google Play x86_64 image. This closely matches a Pixel 9a-class device while running efficiently on an x86_64 Linux development machine.
+
+Install the emulator and system image:
+
+```bash
+sdkmanager --install "emulator" "system-images;android-36;google_apis_playstore;x86_64"
+```
+
+Create the AVD:
+
+```bash
+printf 'no\n' | avdmanager create avd \
+  --name "Pixel_9a_API_36" \
+  --package "system-images;android-36;google_apis_playstore;x86_64" \
+  --device "pixel_9a"
+```
+
+If `avdmanager list avd` shows the device but `emulator -list-avds` does not, the tools may be using different Android config directories. Point the emulator at the AVD directory or link it into the legacy location:
+
+```bash
+ANDROID_AVD_HOME="$HOME/.config/.android/avd" emulator -list-avds
+ln -s "$HOME/.config/.android/avd" "$HOME/.android/avd"
+```
+
+Launch the emulator:
+
+```bash
+emulator -avd Pixel_9a_API_36
+```
+
+Verify that the emulator is booted and has the expected profile:
+
+```bash
+adb wait-for-device shell 'while [ "$(getprop sys.boot_completed)" != "1" ]; do sleep 2; done'
+adb shell getprop ro.build.version.release
+adb shell wm size
+adb shell wm density
+```
+
+Expected profile:
+
+- Android version: `16`
+- Physical size: `1080x2424`
+- Physical density: `420`
+
+Install the debug build onto the running emulator:
+
+```bash
+./gradlew installDebug
+```
+
+For manual validation, verify offline startup, workout creation, logging, export/import, back navigation, and persistence across app restarts.
+
+### Instrumentation Tests
 
 Android instrumentation tests:
 

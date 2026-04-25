@@ -9,22 +9,31 @@ import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
+    private lateinit var assetLoader: WebViewAssetLoader
     private var latestSystemBarInsets = Insets.NONE
+    private var legacyStorageMigrationInProgress = false
+    private var pendingLegacyStorageJson: String? = null
 
     // Import logic
     private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
@@ -71,15 +80,22 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         
         webView = WebView(this)
+        assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
         webView.setBackgroundColor(Color.parseColor("#F5F5F5"))
+        legacyStorageMigrationInProgress = shouldRunLegacyStorageMigration()
+        if (legacyStorageMigrationInProgress) {
+            webView.alpha = 0f
+        }
         configureSystemBarInsets()
         configureWebView()
+        configureBackNavigation()
         
         setContentView(webView)
         ViewCompat.requestApplyInsets(webView)
         
-        // Load the local HTML file from assets
-        webView.loadUrl("file:///android_asset/www/index.html")
+        webView.loadUrl(if (legacyStorageMigrationInProgress) LEGACY_APP_URL else APP_URL)
     }
 
     private fun configureSystemBarInsets() {
@@ -94,14 +110,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun applySystemBarInsetsToPage() {
         val insets = latestSystemBarInsets
+        val density = resources.displayMetrics.density
+        val top = (insets.top / density).roundToInt()
+        val right = (insets.right / density).roundToInt()
+        val bottom = (insets.bottom / density).roundToInt()
+        val left = (insets.left / density).roundToInt()
+
         webView.evaluateJavascript(
             """
             (() => {
               const root = document.documentElement;
-              root.style.setProperty('--android-safe-area-top', '${insets.top}px');
-              root.style.setProperty('--android-safe-area-right', '${insets.right}px');
-              root.style.setProperty('--android-safe-area-bottom', '${insets.bottom}px');
-              root.style.setProperty('--android-safe-area-left', '${insets.left}px');
+              root.style.setProperty('--android-safe-area-top', '${top}px');
+              root.style.setProperty('--android-safe-area-right', '${right}px');
+              root.style.setProperty('--android-safe-area-bottom', '${bottom}px');
+              root.style.setProperty('--android-safe-area-left', '${left}px');
             })();
             """.trimIndent(),
             null
@@ -117,14 +139,7 @@ class MainActivity : AppCompatActivity() {
         // Enable DOM storage for localStorage
         settings.domStorageEnabled = true
         
-        // Allow file access from file URLs and universal access to disable CORS for local files
-        settings.allowFileAccess = true
-        settings.allowContentAccess = true
-        settings.allowFileAccessFromFileURLs = true
-        settings.allowUniversalAccessFromFileURLs = true
-        
-        // Enable database storage
-        settings.databaseEnabled = true
+        setLegacyFileAccessEnabled(legacyStorageMigrationInProgress)
         
         // Set user agent (optional)
         settings.userAgentString = settings.userAgentString + " FitnessMomentum/1.0"
@@ -132,19 +147,30 @@ class MainActivity : AppCompatActivity() {
         // Add Javascript Interface
         webView.addJavascriptInterface(WebAppInterface(this), "Android")
 
-        // Prevent navigation away from local files
+        // Serve bundled assets from a scoped HTTPS origin and block navigation away from it.
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
-                applySystemBarInsetsToPage()
+                when {
+                    url == LEGACY_APP_URL -> migrateLegacyStorageFromFileOrigin()
+                    url?.startsWith(APP_URL_PREFIX) == true -> {
+                        applySystemBarInsetsToPage()
+                        migrateLegacyStorageToAssetOrigin()
+                    }
+                    else -> applySystemBarInsetsToPage()
+                }
             }
 
-            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                // Only allow loading local files
-                return if (url?.startsWith("file://") == true || url?.startsWith("http://localhost") == true) {
-                    false
-                } else {
-                    true // Block external URLs
-                }
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val url = request?.url ?: return true
+                return !isAllowedWebViewUrl(url)
+            }
+
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                val url = request?.url ?: return null
+                return assetLoader.shouldInterceptRequest(url)
             }
         }
         
@@ -180,6 +206,106 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun setLegacyFileAccessEnabled(enabled: Boolean) {
+        val settings = webView.settings
+        settings.allowFileAccess = enabled
+        settings.allowContentAccess = enabled
+        settings.allowFileAccessFromFileURLs = enabled
+        settings.allowUniversalAccessFromFileURLs = enabled
+    }
+
+    private fun isAllowedWebViewUrl(url: Uri): Boolean {
+        if (url.host == ASSET_HOST) {
+            return true
+        }
+
+        return legacyStorageMigrationInProgress && url.toString().startsWith(LEGACY_APP_URL_PREFIX)
+    }
+
+    private fun shouldRunLegacyStorageMigration(): Boolean {
+        return !getPreferences(Context.MODE_PRIVATE).getBoolean(PREF_LEGACY_STORAGE_MIGRATED, false)
+    }
+
+    private fun markLegacyStorageMigrationComplete() {
+        getPreferences(Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(PREF_LEGACY_STORAGE_MIGRATED, true)
+            .apply()
+    }
+
+    private fun migrateLegacyStorageFromFileOrigin() {
+        webView.evaluateJavascript(
+            """
+            (() => {
+              const data = {};
+              for (let i = 0; i < window.localStorage.length; i += 1) {
+                const key = window.localStorage.key(i);
+                if (key !== null) {
+                  data[key] = window.localStorage.getItem(key);
+                }
+              }
+              return JSON.stringify(data);
+            })();
+            """.trimIndent()
+        ) { result ->
+            pendingLegacyStorageJson = decodeJavascriptStringResult(result).takeIf { legacyJson ->
+                runCatching { JSONObject(legacyJson).length() > 0 }.getOrDefault(false)
+            }
+            setLegacyFileAccessEnabled(false)
+            webView.loadUrl(APP_URL)
+        }
+    }
+
+    private fun decodeJavascriptStringResult(result: String?): String {
+        if (result.isNullOrBlank() || result == "null") {
+            return "{}"
+        }
+
+        return runCatching {
+            JSONTokener(result).nextValue() as? String
+        }.getOrNull() ?: "{}"
+    }
+
+    private fun migrateLegacyStorageToAssetOrigin() {
+        val legacyStorageJson = pendingLegacyStorageJson
+        if (legacyStorageJson == null) {
+            finishLegacyStorageMigration()
+            return
+        }
+
+        pendingLegacyStorageJson = null
+        val escaped = JSONObject.quote(legacyStorageJson)
+        webView.evaluateJavascript(
+            """
+            (() => {
+              const incoming = JSON.parse($escaped);
+              let imported = 0;
+              for (const key of Object.keys(incoming)) {
+                const value = incoming[key];
+                if (typeof value === 'string' && window.localStorage.getItem(key) === null) {
+                  window.localStorage.setItem(key, value);
+                  imported += 1;
+                }
+              }
+              return imported;
+            })();
+            """.trimIndent()
+        ) {
+            markLegacyStorageMigrationComplete()
+            legacyStorageMigrationInProgress = false
+            webView.reload()
+        }
+    }
+
+    private fun finishLegacyStorageMigration() {
+        if (legacyStorageMigrationInProgress) {
+            markLegacyStorageMigrationComplete()
+            legacyStorageMigrationInProgress = false
+        }
+        webView.alpha = 1f
     }
 
     private fun writeBackupData(uri: Uri) {
@@ -268,11 +394,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            super.onBackPressed()
-        }
+    private fun configureBackNavigation() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+    }
+
+    companion object {
+        private const val ASSET_HOST = "appassets.androidplatform.net"
+        private const val APP_URL_PREFIX = "https://$ASSET_HOST/assets/www/"
+        private const val APP_URL = "https://$ASSET_HOST/assets/www/index.html"
+        private const val LEGACY_APP_URL_PREFIX = "file:///android_asset/www/"
+        private const val LEGACY_APP_URL = "${LEGACY_APP_URL_PREFIX}index.html"
+        private const val PREF_LEGACY_STORAGE_MIGRATED = "legacy_storage_migrated_to_asset_loader"
     }
 }

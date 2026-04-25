@@ -412,7 +412,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 1.5rem;
+    padding:
+      calc(1.5rem + var(--android-safe-area-top, env(safe-area-inset-top, 0px)))
+      calc(1.5rem + var(--android-safe-area-right, env(safe-area-inset-right, 0px)))
+      calc(1.5rem + var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px)))
+      calc(1.5rem + var(--android-safe-area-left, env(safe-area-inset-left, 0px)));
     z-index: 1000;
   }
 

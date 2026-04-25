@@ -1545,7 +1545,11 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    padding: 1.5rem;
+    padding:
+      calc(1.5rem + var(--android-safe-area-top, env(safe-area-inset-top, 0px)))
+      calc(1.5rem + var(--android-safe-area-right, env(safe-area-inset-right, 0px)))
+      1.5rem
+      calc(1.5rem + var(--android-safe-area-left, env(safe-area-inset-left, 0px)));
     border-bottom: 1px solid #eee;
     flex-wrap: wrap;
     gap: 1rem;

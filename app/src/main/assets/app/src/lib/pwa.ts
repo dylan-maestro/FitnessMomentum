@@ -3,8 +3,8 @@ export function registerPwaServiceWorker(): void {
     return;
   }
 
-  // Android's shell loads from file://android_asset and cannot use service workers.
-  if (window.location.protocol === 'file:') {
+  // The Android shell already serves bundled assets locally through WebViewAssetLoader.
+  if (window.location.protocol === 'file:' || window.location.hostname === 'appassets.androidplatform.net') {
     return;
   }
 

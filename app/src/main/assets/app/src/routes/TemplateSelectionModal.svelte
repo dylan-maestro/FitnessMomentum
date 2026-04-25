@@ -130,7 +130,11 @@
     align-items: center;
     justify-content: center;
     z-index: 1000;
-    padding: 1rem;
+    padding:
+      calc(1rem + var(--android-safe-area-top, env(safe-area-inset-top, 0px)))
+      calc(1rem + var(--android-safe-area-right, env(safe-area-inset-right, 0px)))
+      calc(1rem + var(--android-safe-area-bottom, env(safe-area-inset-bottom, 0px)))
+      calc(1rem + var(--android-safe-area-left, env(safe-area-inset-left, 0px)));
     backdrop-filter: blur(2px);
   }
 
