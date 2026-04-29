@@ -1,10 +1,13 @@
 package com.fitnessmomentum
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
@@ -17,9 +20,11 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -76,6 +81,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        dispatchNotificationPermissionResult(if (granted) "granted" else "denied")
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -94,6 +103,7 @@ class MainActivity : AppCompatActivity() {
         
         setContentView(webView)
         ViewCompat.requestApplyInsets(webView)
+        ReminderScheduler.scheduleFromStored(this)
         
         webView.loadUrl(if (legacyStorageMigrationInProgress) LEGACY_APP_URL else APP_URL)
     }
@@ -359,6 +369,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun dispatchNotificationPermissionResult(state: String) {
+        val escaped = JSONObject.quote(state)
+        runOnUiThread {
+            webView.evaluateJavascript("window.__onAndroidNotificationPermissionResult?.($escaped);", null)
+        }
+    }
+
+    private fun getNotificationPermissionState(): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return "granted"
+        }
+
+        return if (
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            "granted"
+        } else {
+            "prompt"
+        }
+    }
+
     inner class WebAppInterface(private val context: Context) {
         @JavascriptInterface
         fun saveBackup(data: String, filename: String) {
@@ -391,6 +423,41 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(context, "Cannot open file picker: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
+        }
+
+        @JavascriptInterface
+        fun setLightStatusBar(enabled: Boolean) {
+            runOnUiThread {
+                WindowInsetsControllerCompat(window, webView).isAppearanceLightStatusBars = enabled
+            }
+        }
+
+        @JavascriptInterface
+        fun getNotificationPermissionState(): String {
+            return this@MainActivity.getNotificationPermissionState()
+        }
+
+        @JavascriptInterface
+        fun requestNotificationPermission() {
+            runOnUiThread {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                    dispatchNotificationPermissionResult("granted")
+                    return@runOnUiThread
+                }
+
+                if (this@MainActivity.getNotificationPermissionState() == "granted") {
+                    dispatchNotificationPermissionResult("granted")
+                    return@runOnUiThread
+                }
+
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
+        @JavascriptInterface
+        fun syncReminderSnapshot(snapshotJson: String) {
+            ReminderScheduler.saveSnapshot(context, snapshotJson)
+            ReminderScheduler.scheduleFromSnapshot(context, snapshotJson)
         }
     }
 

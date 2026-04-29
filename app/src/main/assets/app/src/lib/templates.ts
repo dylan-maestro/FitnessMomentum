@@ -18,6 +18,11 @@ import { walkingLungesTemplate } from './template-data/walking-lunges';
 
 export type { WorkoutTemplate };
 
+const withDefaultTags = (template: WorkoutTemplate): WorkoutTemplate => ({
+  ...template,
+  tags: new Set([...(template.tags ?? []), 'common'])
+});
+
 export const WORKOUT_TEMPLATES: WorkoutTemplate[] = [
   airSquatsTemplate,
   barbellRowTemplate,
@@ -35,4 +40,4 @@ export const WORKOUT_TEMPLATES: WorkoutTemplate[] = [
   runningTemplate,
   swimmingLapsTemplate,
   walkingLungesTemplate,
-];
+].map(withDefaultTags);

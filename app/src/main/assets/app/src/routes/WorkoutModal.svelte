@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { updateWorkout } from '$lib/storage';
+  import { updateSettings, updateWorkout } from '$lib/storage';
   import { showToast, settings } from '$lib/stores';
-  import type { Workout } from '$lib/types';
-  import { createEventDispatcher } from 'svelte';
+  import type { Workout, WorkoutReminderSettings } from '$lib/types';
+  import { createEventDispatcher, onDestroy, onMount, tick } from 'svelte';
   import { getNow } from '$lib/currentDate';
   import { DECAY_RATE_PER_DAY } from '$lib/momentum';
   import { fromMetricDistance, fromMetricWeight, toMetricDistance, toMetricWeight } from '$lib/units';
@@ -46,8 +46,12 @@
   let lastUpdateIsoInput = workout?.lastUpdateUnix ? new Date(workout.lastUpdateUnix).toISOString() : '';
   let showSuperAdvanced = false;
   let hasPersistedWorkout = false;
+  let reminderMode: WorkoutReminderSettings['mode'] = workout?.reminders?.mode ?? 'global';
+  let reminderIdealTime = workout?.reminders?.idealTime ?? '';
+  let reminderLastChanceTime = workout?.reminders?.lastChanceTime ?? '';
 
   $: hasPersistedWorkout = Boolean(workout?.id);
+  $: globalRemindersEnabled = $settings.reminders.enabled;
 
   const multipleFormatter = new Intl.NumberFormat(undefined, {
     minimumFractionDigits: 0,
@@ -67,6 +71,37 @@
   });
 
   type IsoValidationResult = { valid: true; value: string | null } | { valid: false };
+
+  function normalizeReminderInput(value: string): string | null {
+    const trimmed = value?.trim() ?? '';
+    return trimmed || null;
+  }
+
+  function getWorkoutReminders(): WorkoutReminderSettings {
+    return {
+      mode: reminderMode,
+      idealTime: reminderMode === 'override' ? normalizeReminderInput(reminderIdealTime) : null,
+      lastChanceTime: reminderMode === 'override' ? normalizeReminderInput(reminderLastChanceTime) : null
+    };
+  }
+
+  function enableGlobalReminders() {
+    updateSettings({
+      reminders: {
+        ...$settings.reminders,
+        enabled: true
+      }
+    });
+    showToast('Global reminders turned on');
+  }
+
+  function clearExerciseReminderIdealTime() {
+    reminderIdealTime = '';
+  }
+
+  function clearExerciseReminderLastChanceTime() {
+    reminderLastChanceTime = '';
+  }
 
   function validateIsoField(value: string, label: string): IsoValidationResult {
     const trimmed = value?.trim() ?? '';
@@ -121,6 +156,43 @@
     const minutes = Math.floor(safeSeconds / 60);
     const remainderSeconds = safeSeconds % 60;
     return `${String(minutes).padStart(2, '0')}:${String(remainderSeconds).padStart(2, '0')}`;
+  }
+
+  function countDigitsBeforeCaret(value: string, caretPosition: number | null): number {
+    if (caretPosition === null) {
+      return value.replace(/\D/g, '').length;
+    }
+
+    return value.slice(0, caretPosition).replace(/\D/g, '').length;
+  }
+
+  function getCaretPositionForDigitCount(value: string, digitCount: number): number {
+    if (digitCount <= 0) {
+      return 0;
+    }
+
+    let seenDigits = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      if (/\d/.test(value[index])) {
+        seenDigits += 1;
+      }
+      if (seenDigits >= digitCount) {
+        return index + 1;
+      }
+    }
+
+    return value.length;
+  }
+
+  async function restoreTimeInputCaret(target: HTMLInputElement, digitCount: number) {
+    await tick();
+
+    if (document.activeElement !== target) {
+      return;
+    }
+
+    const caretPosition = getCaretPositionForDigitCount(target.value, digitCount);
+    target.setSelectionRange(caretPosition, caretPosition);
   }
 
   function formatTimeVolume(value: number): string {
@@ -212,19 +284,25 @@
   }
 
   function handleSimpleTimeInput(event: Event) {
-    const rawValue = (event.target as HTMLInputElement).value;
+    const target = event.target as HTMLInputElement;
+    const rawValue = target.value;
+    const digitCaretPosition = countDigitsBeforeCaret(rawValue, target.selectionStart);
     const seconds = parseMicrowaveTimeInput(rawValue);
     simpleTimeDisplay = formatMicrowaveTimeInput(seconds);
     simpleReps = seconds > 0 ? seconds : null;
     timeInput = seconds;
     baseVolume = seconds > 0 ? Math.round(seconds * getSimpleEffectiveWeight()) : 0;
+    void restoreTimeInputCaret(target, digitCaretPosition);
   }
 
   function handleBaseTimeInput(event: Event) {
-    const rawValue = (event.target as HTMLInputElement).value;
+    const target = event.target as HTMLInputElement;
+    const rawValue = target.value;
+    const digitCaretPosition = countDigitsBeforeCaret(rawValue, target.selectionStart);
     const seconds = parseMicrowaveTimeInput(rawValue);
     baseTimeInputDisplay = formatMicrowaveTimeInput(seconds);
     baseRepsInput = seconds > 0 ? seconds : null;
+    void restoreTimeInputCaret(target, digitCaretPosition);
   }
 
   function handleTimeVolumeInput(event: Event) {
@@ -613,6 +691,9 @@
           : fromMetricWeight(workout.dailyVolume ?? 0, unitLabel);
       lastLoggedAtInput = workout.lastLoggedAt ?? '';
       previousLoggedAtInput = workout.previousLoggedAt ?? '';
+      reminderMode = workout.reminders?.mode ?? 'global';
+      reminderIdealTime = workout.reminders?.idealTime ?? '';
+      reminderLastChanceTime = workout.reminders?.lastChanceTime ?? '';
       lastUpdateUnixInput = workout.lastUpdateUnix ? String(workout.lastUpdateUnix) : String(getNow());
       syncLastUpdateIso(lastUpdateUnixInput);
       updateSimpleReps();
@@ -637,6 +718,9 @@
       dailyVolumeInput = 0;
       lastLoggedAtInput = '';
       previousLoggedAtInput = '';
+      reminderMode = 'global';
+      reminderIdealTime = '';
+      reminderLastChanceTime = '';
       lastUpdateUnixInput = String(getNow());
       syncLastUpdateIso(lastUpdateUnixInput);
     }
@@ -751,6 +835,7 @@
     }
     const normalizedLastLoggedAt = lastLoggedAtResult.value;
     const normalizedPreviousLoggedAt = previousLoggedAtResult.value;
+    const normalizedReminders = getWorkoutReminders();
 
     baseVolume = roundedBaseVolumeDisplay;
     weight = normalizedWeightDisplay;
@@ -778,6 +863,7 @@
         decay: normalizedDecay,
         targetIncreasePercentage: targetIncreasePercentage,
         targetFrequency: normalizedFrequency,
+        reminders: normalizedReminders,
         lastLoggedAt: normalizedLastLoggedAt,
         previousLoggedAt: normalizedPreviousLoggedAt,
         dailyVolume: normalizedDailyVolume,
@@ -799,6 +885,7 @@
         decay: normalizedDecay,
         targetIncreasePercentage: targetIncreasePercentage,
         targetFrequency: normalizedFrequency,
+        reminders: normalizedReminders,
         lastLoggedAt: normalizedLastLoggedAt,
         previousLoggedAt: normalizedPreviousLoggedAt,
         dailyVolume: normalizedDailyVolume,
@@ -826,6 +913,14 @@
       handleClose();
     }
   }
+
+  onMount(() => {
+    window.Android?.setLightStatusBar?.(true);
+  });
+
+  onDestroy(() => {
+    window.Android?.setLightStatusBar?.(false);
+  });
 </script>
 
 <div
@@ -1507,6 +1602,91 @@
       </div>
       {/if}
 
+      <section class="reminders-section" aria-labelledby="exercise-reminders-title">
+        <div class="reminders-header">
+          <div>
+            <h3 id="exercise-reminders-title">Reminders</h3>
+            <p>Choose whether this exercise follows the global reminder times.</p>
+          </div>
+        </div>
+
+        {#if !globalRemindersEnabled}
+          <div class="reminder-warning" role="status">
+            <p>Global reminders are currently off, so this exercise will not send reminders.</p>
+            <button type="button" class="warning-action" on:click={enableGlobalReminders}>
+              Turn reminders back on
+            </button>
+          </div>
+        {/if}
+
+        <div class="reminder-mode-toggle" role="group" aria-label="Exercise reminder mode">
+          <button
+            type="button"
+            class="type-btn {reminderMode === 'global' ? 'active' : ''}"
+            aria-pressed={reminderMode === 'global'}
+            on:click={() => (reminderMode = 'global')}
+          >
+            Global default
+          </button>
+          <button
+            type="button"
+            class="type-btn {reminderMode === 'override' ? 'active' : ''}"
+            aria-pressed={reminderMode === 'override'}
+            on:click={() => (reminderMode = 'override')}
+          >
+            Exercise override
+          </button>
+        </div>
+
+        {#if reminderMode === 'override'}
+          <div class="reminder-time-grid">
+            <div class="form-subgroup">
+              <label for="exercise-reminder-ideal">Ideal time</label>
+              <div class="time-input-row">
+                <input
+                  id="exercise-reminder-ideal"
+                  type="time"
+                  bind:value={reminderIdealTime}
+                />
+                <button
+                  type="button"
+                  class="clear-time-button"
+                  on:click={clearExerciseReminderIdealTime}
+                  disabled={!reminderIdealTime}
+                  aria-label="Clear exercise ideal reminder time"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div class="form-subgroup">
+              <label for="exercise-reminder-last-chance">Last chance (optional)</label>
+              <div class="time-input-row">
+                <input
+                  id="exercise-reminder-last-chance"
+                  type="time"
+                  bind:value={reminderLastChanceTime}
+                />
+                <button
+                  type="button"
+                  class="clear-time-button"
+                  on:click={clearExerciseReminderLastChanceTime}
+                  disabled={!reminderLastChanceTime}
+                  aria-label="Clear exercise last chance reminder time"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+          <small>Leave both blank to turn reminders off for this exercise only.</small>
+        {:else}
+          <small>
+            Uses {$settings.reminders.idealTime || 'no ideal time'} and {$settings.reminders.lastChanceTime || 'no last chance time'}.
+          </small>
+        {/if}
+      </section>
+
     </div>
 
     <div class="modal-footer">
@@ -1995,7 +2175,8 @@
   }
 
   .form-group input[type="text"],
-  .form-group input[type="number"] {
+  .form-group input[type="number"],
+  .form-subgroup input[type="time"] {
     width: 100%;
     padding: 0.75rem;
     border: 1px solid #ddd;
@@ -2006,6 +2187,97 @@
   .form-group input:focus {
     outline: none;
     border-color: #4CAF50;
+  }
+
+  .reminders-section {
+    border: 1px solid #dfe5eb;
+    border-radius: 12px;
+    padding: 1rem;
+    background: #f8fafc;
+    margin-bottom: 1.5rem;
+  }
+
+  .reminders-header h3 {
+    margin: 0 0 0.25rem;
+    color: #243e51;
+    font-size: 1.05rem;
+  }
+
+  .reminders-header p {
+    margin: 0 0 1rem;
+    color: #667085;
+    font-size: 0.9rem;
+  }
+
+  .reminder-warning {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.85rem;
+    margin-bottom: 1rem;
+    border: 1px solid #f0c36d;
+    border-radius: 10px;
+    background: #fff8e1;
+    color: #6d4c41;
+  }
+
+  .reminder-warning p {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+
+  .warning-action {
+    align-self: flex-start;
+    border: 1px solid #f57c00;
+    border-radius: 8px;
+    background: white;
+    color: #e07000;
+    font-weight: 700;
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+  }
+
+  .reminder-mode-toggle {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .reminder-time-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .time-input-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+
+  .clear-time-button {
+    flex: 0 0 auto;
+    padding: 0 0.75rem;
+    border: 1px solid #d0d5dd;
+    border-radius: 6px;
+    background: white;
+    color: #475467;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .clear-time-button:hover:not(:disabled) {
+    border-color: var(--color-primary-border);
+    color: var(--color-primary);
+    background: var(--color-primary-soft);
+  }
+
+  .clear-time-button:disabled {
+    background: #f1f3f5;
+    color: #98a2b3;
+    cursor: not-allowed;
   }
 
   .form-group small,

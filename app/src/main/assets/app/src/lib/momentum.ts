@@ -2,8 +2,8 @@ import { normalizeDate } from './date';
 import type { Workout } from './types';
 import { appendDecayHistory, ensureHistoryEntry } from './momentumHistory';
 
-// Fixed global default aligned with the previous "Weekly" simple-mode preset.
-export const DECAY_RATE_PER_DAY = 0.01;
+// Fixed global default for newly created exercises and templates.
+export const DECAY_RATE_PER_DAY = 0.05;
 export const TONNAGE_TO_MOMENTUM = 0.01000;
 
 export type MomentumState = {

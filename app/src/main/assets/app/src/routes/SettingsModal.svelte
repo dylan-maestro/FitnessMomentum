@@ -21,29 +21,39 @@
     const metricWeight = toMetricWeight(Number(bodyWeight), weightUnit);
     weightUnit = nextUnit;
     bodyWeight = Math.round(fromMetricWeight(metricWeight, weightUnit));
+    updateSettings({
+      bodyWeight: metricWeight,
+      weightUnit: nextUnit
+    });
   }
 
-  function handleSave() {
+  function handleBodyWeightBlur() {
     const normalizedWeight = Number(bodyWeight);
-    
+
     if (!Number.isFinite(normalizedWeight) || normalizedWeight < 0) {
       showToast('Please enter a valid body weight');
+      bodyWeight = Math.round(fromMetricWeight($settings.bodyWeight, weightUnit));
       return;
     }
+
     const roundedWeight = Math.round(normalizedWeight);
     bodyWeight = roundedWeight;
-
-    const normalizedUnit: 'kg' | 'lb' = weightUnit === 'lb' ? 'lb' : 'kg';
-    const normalizedDistanceUnit: 'km' | 'mi' = distanceUnit === 'mi' ? 'mi' : 'km';
-    const metricBodyWeight = toMetricWeight(roundedWeight, normalizedUnit);
+    const metricBodyWeight = toMetricWeight(roundedWeight, weightUnit);
 
     updateSettings({
-      bodyWeight: metricBodyWeight,
-      weightUnit: normalizedUnit,
-      distanceUnit: normalizedDistanceUnit
+      bodyWeight: metricBodyWeight
     });
-    showToast('Settings saved');
-    dispatch('close');
+  }
+
+  function handleDistanceUnitChange(nextUnit: 'km' | 'mi') {
+    if (nextUnit === distanceUnit) {
+      return;
+    }
+
+    distanceUnit = nextUnit;
+    updateSettings({
+      distanceUnit: nextUnit
+    });
   }
 
   function handleClose() {
@@ -251,6 +261,7 @@
           min="0"
           step="1"
           placeholder="Enter your body weight"
+          on:blur={handleBodyWeightBlur}
         />
         <small>Used as the default weight for bodyweight exercises</small>
       </div>
@@ -283,7 +294,7 @@
             type="button"
             class="unit-btn {distanceUnit === 'km' ? 'active' : ''}"
             aria-pressed={distanceUnit === 'km'}
-            on:click={() => (distanceUnit = 'km')}
+            on:click={() => handleDistanceUnitChange('km')}
           >
             Kilometers (km)
           </button>
@@ -291,7 +302,7 @@
             type="button"
             class="unit-btn {distanceUnit === 'mi' ? 'active' : ''}"
             aria-pressed={distanceUnit === 'mi'}
-            on:click={() => (distanceUnit = 'mi')}
+            on:click={() => handleDistanceUnitChange('mi')}
           >
             Miles (mi)
           </button>
@@ -320,10 +331,6 @@
       </fieldset>
     </div>
 
-    <div class="modal-footer">
-      <button class="cancel-button" on:click={handleClose}>Cancel</button>
-      <button class="save-button" on:click={handleSave}>Save</button>
-    </div>
     <p class="app-version">Version {appVersion}</p>
   </div>
 </div>
@@ -475,48 +482,11 @@
     outline-offset: 2px;
   }
 
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 1rem;
-    padding: 1.5rem;
-    border-top: 1px solid #eee;
-  }
-
   .app-version {
     padding: 0 1.5rem 1.5rem;
     font-size: 0.85rem;
     color: #888;
     text-align: right;
-  }
-
-  .cancel-button,
-  .save-button {
-    padding: 0.75rem 1.5rem;
-    border: none;
-    border-radius: 6px;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .cancel-button {
-    background: #f5f5f5;
-    color: #333;
-  }
-
-  .cancel-button:hover {
-    background: #e0e0e0;
-  }
-
-  .save-button {
-    background: #4CAF50;
-    color: white;
-  }
-
-  .save-button:hover {
-    background: #45a049;
   }
 
   .data-management-buttons {

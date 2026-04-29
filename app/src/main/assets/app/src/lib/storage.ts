@@ -7,9 +7,18 @@ import { ensureMomentumState, addVolumeAndUpdate, DECAY_RATE_PER_DAY } from './m
 import { get } from 'svelte/store';
 import { normalizeDate, daysBetween } from './date';
 import { isWorkoutType, type WorkoutType } from './workoutTypes';
+import {
+  DEFAULT_REMINDER_SETTINGS,
+  DEFAULT_WORKOUT_REMINDERS,
+  mergeReminderSettings,
+  normalizeReminderSettings,
+  normalizeWorkoutReminders
+} from './reminderSettings';
 
 const WORKOUTS_STORAGE_KEY = 'fitness-momentum-workouts';
 const SETTINGS_STORAGE_KEY = 'fitness-momentum-settings';
+const LEGACY_DEFAULT_DECAY_RATE = 0.01;
+const DECAY_MIGRATION_EPSILON = 1e-9;
 
 export function loadSettings(): void {
   try {
@@ -20,14 +29,16 @@ export function loadSettings(): void {
       const normalized: Settings = {
         bodyWeight: typeof parsed.bodyWeight === 'number' ? parsed.bodyWeight : 70,
         weightUnit: parsed.weightUnit === 'lb' ? 'lb' : 'kg',
-        distanceUnit: parsed.distanceUnit === 'mi' ? 'mi' : 'km'
+        distanceUnit: parsed.distanceUnit === 'mi' ? 'mi' : 'km',
+        reminders: normalizeReminderSettings(parsed.reminders)
       };
       settings.set(normalized);
     } else {
       settings.set({
         bodyWeight: 70,
         weightUnit: 'kg',
-        distanceUnit: 'km'
+        distanceUnit: 'km',
+        reminders: DEFAULT_REMINDER_SETTINGS
       });
     }
   } catch (error) {
@@ -46,7 +57,13 @@ export function saveSettings(newSettings: Settings): void {
 
 export function updateSettings(updates: Partial<Settings>): void {
   settings.update((current) => {
-    const updatedSettings = { ...current, ...updates };
+    const updatedSettings = {
+      ...current,
+      ...updates,
+      reminders: updates.reminders
+        ? mergeReminderSettings(current.reminders, updates.reminders)
+        : current.reminders
+    };
     saveSettings(updatedSettings);
 
     // Cascade body weight changes to workouts marked as bodyweight
@@ -124,6 +141,32 @@ function getEffectiveWeight(isBodyweight: boolean, weight: number, bodyweightMul
 
 function getTargetRoundingMode(workoutType?: WorkoutType): 'ceil' | 'none' {
   return workoutType === 'distance' ? 'none' : 'ceil';
+}
+
+function normalizeDecayWithMigration(raw: Record<string, unknown>): {
+  decay: number;
+  decayMigrated: boolean;
+} {
+  const rawDecay =
+    typeof raw.decay === 'number' && Number.isFinite(raw.decay) && raw.decay > 0
+      ? raw.decay
+      : null;
+  const alreadyMigrated = raw.decayMigrated === true;
+
+  if (alreadyMigrated) {
+    return {
+      decay: rawDecay ?? DECAY_RATE_PER_DAY,
+      decayMigrated: true
+    };
+  }
+
+  const shouldMigrateLegacyDefault =
+    rawDecay === null || Math.abs(rawDecay - LEGACY_DEFAULT_DECAY_RATE) < DECAY_MIGRATION_EPSILON;
+
+  return {
+    decay: shouldMigrateLegacyDefault ? DECAY_RATE_PER_DAY : (rawDecay ?? DECAY_RATE_PER_DAY),
+    decayMigrated: true
+  };
 }
 
 function sanitizeMomentumValue(value: unknown): number {
@@ -260,9 +303,7 @@ export function loadWorkouts(): Promise<void> {
           );
           const normalizedIsBodyweight = bodyweightMultiplier > 0;
 
-          const decay = typeof raw.decay === 'number' && Number.isFinite(raw.decay) && raw.decay > 0
-            ? raw.decay
-            : DECAY_RATE_PER_DAY;
+          const { decay, decayMigrated } = normalizeDecayWithMigration(raw);
             
           const targetIncreasePercentage =
             typeof raw.targetIncreasePercentage === 'number' && Number.isFinite(raw.targetIncreasePercentage) && raw.targetIncreasePercentage >= 0
@@ -346,6 +387,7 @@ export function loadWorkouts(): Promise<void> {
             null;
             
           const previousLoggedAt = parseIsoTimestamp(raw.previousLoggedAt) ?? null;
+          const reminders = normalizeWorkoutReminders(raw.reminders);
             
           const dailyVolume = typeof raw.dailyVolume === 'number' ? raw.dailyVolume : 0;
           
@@ -363,6 +405,7 @@ export function loadWorkouts(): Promise<void> {
             isBodyweight: normalizedIsBodyweight,
             bodyweightMultiplier,
             decay,
+            decayMigrated,
             targetIncreasePercentage,
             targetFrequency,
             workoutType,
@@ -374,6 +417,7 @@ export function loadWorkouts(): Promise<void> {
             lastUpdateUnix: decayResult.lastUpdateUnix,
             lastLoggedAt,
             previousLoggedAt,
+            reminders,
             dailyVolume,
             repsRequired: calculateReps(
               decayResult.momentum,
@@ -425,6 +469,7 @@ type NewWorkoutInput = {
   workoutType?: WorkoutType;
   momentumFactor?: number;
   distanceInputMode?: 'simple' | 'laps';
+  reminders?: Workout['reminders'];
   lastLoggedAt?: string | null;
   previousLoggedAt?: string | null;
   lastUpdateUnix?: number | string | null;
@@ -476,6 +521,7 @@ export function addWorkout(workout: NewWorkoutInput): void {
     const sanitizedPreviousLoggedAt = workout.previousLoggedAt
       ? parseIsoTimestamp(workout.previousLoggedAt) ?? null
       : null;
+    const reminders = normalizeWorkoutReminders(workout.reminders ?? DEFAULT_WORKOUT_REMINDERS);
     const sanitizedDailyVolume =
       typeof workout.dailyVolume === 'number' && Number.isFinite(workout.dailyVolume) && workout.dailyVolume >= 0
         ? workout.dailyVolume
@@ -512,6 +558,7 @@ export function addWorkout(workout: NewWorkoutInput): void {
       isBodyweight: normalizedIsBodyweight,
       bodyweightMultiplier,
       decay,
+      decayMigrated: true,
       targetIncreasePercentage,
       targetFrequency,
       workoutType: workout.workoutType,
@@ -523,6 +570,7 @@ export function addWorkout(workout: NewWorkoutInput): void {
       lastUpdateUnix: momentumState.lastUpdateUnix,
       lastLoggedAt: sanitizedLastLoggedAt,
       previousLoggedAt: sanitizedPreviousLoggedAt,
+      reminders,
       dailyVolume: sanitizedDailyVolume,
       repsRequired: calculatedReps,
       momentumHistory
@@ -628,6 +676,10 @@ export function updateWorkout(id: string, updates: Partial<Workout>): void {
             updatedWorkout.previousLoggedAt = updates.previousLoggedAt
                 ? parseIsoTimestamp(updates.previousLoggedAt) ?? null
                 : null;
+        }
+
+        if (updates.reminders !== undefined) {
+          updatedWorkout.reminders = normalizeWorkoutReminders(updates.reminders);
         }
         
         if (updates.dailyVolume !== undefined) {

@@ -41,6 +41,12 @@ Fitness Momentum stores data locally in browser/WebView `localStorage`. That inc
 
 There is no cloud backend in this repository, and Android and browser/PWA installs do not sync automatically. To move data between them, export a backup JSON from one install and import it into the other.
 
+### Temporary Migration TODO
+
+- Remove the one-time `decayMigrated` workout flag after users have had at least one release cycle to migrate from the old default decay value.
+- Cleanup steps: delete `decayMigrated` from the `Workout` type, remove the legacy `0.01` decay migration helper from `storage.ts`, and simplify workout loading so invalid or missing decay values fall back directly to `DECAY_RATE_PER_DAY`.
+- Do not remove this before a release containing the migration has shipped, otherwise existing workouts saved with the former default may remain at `0.01`.
+
 ## Built-In Templates
 
 The app currently ships with these starter templates:

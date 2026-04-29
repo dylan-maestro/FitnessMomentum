@@ -1,5 +1,19 @@
 import type { WorkoutType } from './workoutTypes';
 
+export type ReminderTime = string | null;
+
+export type ReminderSettings = {
+  enabled: boolean;
+  idealTime: ReminderTime;
+  lastChanceTime: ReminderTime;
+};
+
+export type WorkoutReminderSettings = {
+  mode: 'global' | 'override';
+  idealTime: ReminderTime;
+  lastChanceTime: ReminderTime;
+};
+
 export type MomentumHistoryEntry = {
   date: string;
   momentum: number;
@@ -13,6 +27,7 @@ export type Workout = {
   lastAllTimeHighCelebratedOn?: string | null; // Local YYYY-MM-DD date when the ATH celebration last fired.
   baseVolume: number;
   decay?: number; // Daily decay rate. Optional, defaults to the fixed global constant.
+  decayMigrated?: boolean; // Temporary one-time migration flag for the 0.01 -> 0.05 default decay change.
   targetIncreasePercentage?: number; // Optional percentage to increase target volume (e.g. 0.1 for 10%)
   targetFrequency?: number; // Optional target frequency in days (default 1). Used to calculate catch-up volume.
   weight: number;
@@ -24,6 +39,7 @@ export type Workout = {
   dailyVolume: number; // Accumulated volume for the date specified in lastLoggedAt
   lastLoggedAt: string | null; // ISO timestamp when volume was last recorded
   previousLoggedAt?: string | null; // ISO timestamp of the log BEFORE the current day (used for catch-up calc)
+  reminders: WorkoutReminderSettings;
   lastUpdateUnix: number; // Unix timestamp (ms) used for continuous decay
   repsRequired: number; // Calculated: (baseVolume + momentum * multiplier) / weight
   momentumHistory: MomentumHistoryEntry[]; // Chronological momentum snapshots (most recent last)
@@ -33,4 +49,5 @@ export type Settings = {
   bodyWeight: number;
   weightUnit: 'kg' | 'lb';
   distanceUnit?: 'km' | 'mi'; // Optional distance unit preference (defaults to 'km')
+  reminders: ReminderSettings;
 };

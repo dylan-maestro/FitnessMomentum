@@ -1,7 +1,9 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { normalizeDate } from '$lib/date';
+  import { DECAY_RATE_PER_DAY } from '$lib/momentum';
   import type { Workout, MomentumHistoryEntry } from '$lib/types';
+  import { getDefaultMomentumFactor } from '$lib/workoutTypes';
 
   const dispatch = createEventDispatcher<{ close: void }>();
 
@@ -9,13 +11,15 @@
 
   let overlayEl: HTMLDivElement | null = null;
 
-  const MAX_POINTS = 365;
+  const HISTORY_WINDOW_DAYS = 365;
   const LOOKBACK_DAYS = 7;
   const PROJECTION_DAYS = 30;
   const SVG_WIDTH = 640;
   const SVG_HEIGHT = 260;
   const MARGIN = 20;
-  const CHART_WIDTH = SVG_WIDTH - MARGIN * 2;
+  const CHART_LEFT = 52;
+  const CHART_TOP = MARGIN;
+  const CHART_WIDTH = SVG_WIDTH - CHART_LEFT - MARGIN;
   const CHART_HEIGHT = SVG_HEIGHT - MARGIN * 2;
 
   const numberFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
@@ -34,6 +38,10 @@
     return normalizeDate(base);
   }
 
+  function subtractDays(dateStr: string, days: number): string {
+    return addDays(dateStr, -days);
+  }
+
   function diffInDays(start: string, end: string): number {
     const startDate = new Date(`${start}T00:00:00`);
     const endDate = new Date(`${end}T00:00:00`);
@@ -44,60 +52,172 @@
     return Math.max(0, Math.round(diffMs / (1000 * 60 * 60 * 24)));
   }
 
-  $: history = (workout?.momentumHistory ?? []).slice(-MAX_POINTS);
-  $: sortedHistory = history.slice().sort((a, b) => a.date.localeCompare(b.date));
-  $: latestEntry = sortedHistory[sortedHistory.length - 1];
-  $: projectionEntries = (() => {
-    if (!latestEntry) {
-      return [];
+  function calculateBaselineMomentum(target: Workout): number | null {
+    const baseVolume = Number(target.baseVolume) || 0;
+    const configuredFactor = target.momentumFactor ?? getDefaultMomentumFactor(target.workoutType);
+    const factor =
+      Number.isFinite(configuredFactor) && configuredFactor > 0
+        ? configuredFactor
+        : getDefaultMomentumFactor(target.workoutType);
+    const decayRate = target.decay ?? DECAY_RATE_PER_DAY;
+
+    if (baseVolume <= 0 || !Number.isFinite(factor) || factor <= 0 || decayRate <= 0) {
+      return null;
     }
 
-    const subset = sortedHistory.slice().reverse();
-    let windowEntries: MomentumHistoryEntry[] = [];
+    const safeFrequency = Math.max(1, Math.round(target.targetFrequency || 1));
+    const effectiveIncreasePercentage = target.targetIncreasePercentage ?? 0;
+    const targetBaseVolume = baseVolume * (1 + effectiveIncreasePercentage);
+    const momentumTargetMultiplier =
+      Math.exp(decayRate * safeFrequency) * (1 + effectiveIncreasePercentage) - 1;
 
-    for (const entry of subset) {
-      if (windowEntries.length === 0) {
-        windowEntries.push(entry);
+    if (!Number.isFinite(momentumTargetMultiplier) || momentumTargetMultiplier <= 0) {
+      return null;
+    }
+
+    return targetBaseVolume * factor / momentumTargetMultiplier;
+  }
+
+  function calculateTargetVolume(
+    momentum: number,
+    target: Workout,
+    daysSinceLastWorkout: number,
+    observedFrequency: number
+  ): number {
+    const baseVolume = Math.max(0, Number(target.baseVolume) || 0);
+    const factor = target.momentumFactor ?? getDefaultMomentumFactor(target.workoutType);
+    const decayRate = target.decay ?? DECAY_RATE_PER_DAY;
+    const safeFrequency = Math.max(1, observedFrequency);
+    const adherenceRatio = Math.min(1, Math.max(0, daysSinceLastWorkout / safeFrequency));
+    const effectiveIncreasePercentage = (target.targetIncreasePercentage ?? 0) * adherenceRatio;
+    const targetBaseVolume = baseVolume * (1 + effectiveIncreasePercentage);
+    const catchupDays = Math.max(1, Math.min(daysSinceLastWorkout, safeFrequency));
+    let targetMomentumVolume = 0;
+
+    if (momentum > 0 && Number.isFinite(factor) && factor > 0) {
+      const preDecayMomentum = momentum * Math.exp(decayRate * catchupDays);
+      const targetMomentum = preDecayMomentum * (1 + effectiveIncreasePercentage);
+      const requiredMomentumGain = targetMomentum - momentum;
+
+      if (requiredMomentumGain > 0) {
+        targetMomentumVolume = requiredMomentumGain / factor;
+      }
+    }
+
+    return Math.max(targetBaseVolume, targetMomentumVolume);
+  }
+
+  function getRecentWorkoutDates(
+    entries: MomentumHistoryEntry[],
+    latestDate: string,
+    decayRate: number
+  ): string[] {
+    const windowStart = subtractDays(latestDate, PROJECTION_DAYS);
+    const workoutDates: string[] = [];
+
+    for (let index = 1; index < entries.length; index += 1) {
+      const previous = entries[index - 1];
+      const entry = entries[index];
+
+      if (entry.date < windowStart || entry.date > latestDate) {
         continue;
       }
 
-      const first = windowEntries[windowEntries.length - 1];
-      const elapsed = diffInDays(entry.date, first.date);
-      if (elapsed >= PROJECTION_DAYS) {
-        windowEntries.push(entry);
-        break;
+      const elapsedDays = diffInDays(previous.date, entry.date);
+      if (elapsedDays <= 0) {
+        continue;
       }
-      windowEntries.push(entry);
+
+      const decayOnlyMomentum = previous.momentum * Math.exp(-decayRate * elapsedDays);
+      if (entry.momentum > decayOnlyMomentum + 1e-4) {
+        workoutDates.push(entry.date);
+      }
     }
 
-    windowEntries = windowEntries.reverse();
+    return workoutDates;
+  }
 
-    if (windowEntries.length < 2) {
+  function getObservedWorkoutFrequency(workoutDates: string[], latestDate: string): number | null {
+    if (workoutDates.length === 0) {
+      return null;
+    }
+
+    if (workoutDates.length === 1) {
+      return Math.max(1, diffInDays(subtractDays(latestDate, PROJECTION_DAYS), latestDate));
+    }
+
+    const firstDate = workoutDates[0];
+    const lastDate = workoutDates[workoutDates.length - 1];
+    const elapsedDays = diffInDays(firstDate, lastDate);
+    return Math.max(1, elapsedDays / (workoutDates.length - 1));
+  }
+
+  function buildProjectionEntries(target: Workout, entries: MomentumHistoryEntry[]): MomentumHistoryEntry[] {
+    const latest = entries[entries.length - 1];
+    if (!latest) {
       return [];
     }
-    const firstWindowEntry = windowEntries[0];
-    const lastWindowEntry = windowEntries[windowEntries.length - 1];
-    const elapsedDays = diffInDays(firstWindowEntry.date, lastWindowEntry.date);
-    if (elapsedDays <= 0) {
-      return [];
-    }
 
-    const slopePerDay = (lastWindowEntry.momentum - firstWindowEntry.momentum) / elapsedDays;
+    const decayRate = target.decay ?? DECAY_RATE_PER_DAY;
+    const factor = target.momentumFactor ?? getDefaultMomentumFactor(target.workoutType);
+    const workoutDates = getRecentWorkoutDates(entries, latest.date, decayRate);
+    const observedFrequency = getObservedWorkoutFrequency(workoutDates, latest.date);
     const projected: MomentumHistoryEntry[] = [];
+    let simulatedMomentum = latest.momentum;
+    let lastWorkoutDate = workoutDates[workoutDates.length - 1] ?? null;
+
     for (let day = 1; day <= PROJECTION_DAYS; day += 1) {
-      const date = addDays(latestEntry.date, day);
+      const date = addDays(latest.date, day);
       if (!date) continue;
-      const momentum = latestEntry.momentum + slopePerDay * day;
-      projected.push({
-        date,
-        momentum: Number(Math.max(0, momentum).toFixed(6))
-      });
+
+      simulatedMomentum *= Math.exp(-decayRate);
+
+      if (observedFrequency !== null && lastWorkoutDate) {
+        const daysSinceLastWorkout = diffInDays(lastWorkoutDate, date);
+
+        if (daysSinceLastWorkout >= observedFrequency) {
+          const targetVolume = calculateTargetVolume(
+            simulatedMomentum,
+            target,
+            daysSinceLastWorkout,
+            observedFrequency
+          );
+          simulatedMomentum += Math.max(0, targetVolume) * factor;
+          lastWorkoutDate = date;
+
+          projected.push({
+            date,
+            momentum: Number(Math.max(0, simulatedMomentum).toFixed(6))
+          });
+        }
+      } else {
+        projected.push({
+          date,
+          momentum: Number(Math.max(0, simulatedMomentum).toFixed(6))
+        });
+      }
     }
+
     return projected;
-  })();
+  }
+
+  $: allHistory = (workout?.momentumHistory ?? []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  $: latestHistoryEntry = allHistory[allHistory.length - 1] ?? null;
+  $: windowStartDate = latestHistoryEntry
+    ? subtractDays(latestHistoryEntry.date, HISTORY_WINDOW_DAYS)
+    : null;
+  $: sortedHistory = allHistory.filter(
+    (entry) => !windowStartDate || entry.date >= windowStartDate
+  );
+  $: latestEntry = sortedHistory[sortedHistory.length - 1];
+  $: baselineMomentum = calculateBaselineMomentum(workout);
+  $: projectionEntries = buildProjectionEntries(workout, sortedHistory);
 
   $: extendedHistory = [...sortedHistory, ...projectionEntries];
-  $: values = extendedHistory.map((entry) => entry.momentum);
+  $: values = [
+    ...extendedHistory.map((entry) => entry.momentum),
+    ...(baselineMomentum !== null ? [baselineMomentum] : [])
+  ];
   $: minValue = values.length ? Math.min(...values) : 0;
   $: maxValue = values.length ? Math.max(...values) : 0;
   $: range = maxValue - minValue;
@@ -131,10 +251,15 @@
     } else if (fallbackCount > 1) {
       ratio = fallbackIndex / (fallbackCount - 1);
     }
-    const x = MARGIN + ratio * CHART_WIDTH;
+    const x = CHART_LEFT + ratio * CHART_WIDTH;
     const normalized = (momentum - domainMin) / domainRange;
-    const y = MARGIN + CHART_HEIGHT - normalized * CHART_HEIGHT;
+    const y = CHART_TOP + CHART_HEIGHT - normalized * CHART_HEIGHT;
     return { x, y };
+  }
+
+  function toChartY(momentum: number): number {
+    const normalized = (momentum - domainMin) / domainRange;
+    return CHART_TOP + CHART_HEIGHT - normalized * CHART_HEIGHT;
   }
 
   $: actualPoints = sortedHistory.map((entry, index) =>
@@ -187,27 +312,27 @@
     return result.join(' ');
   }
 
-  $: linePath = actualPoints.length
-    ? `M ${actualPoints[0].x} ${actualPoints[0].y} ` + buildSmoothPath(actualPoints)
-    : '';
+  function buildSmoothLinePath(points: { x: number; y: number }[]): string {
+    if (!points.length) return '';
+    return `M ${points[0].x} ${points[0].y} ${buildSmoothPath(points)}`;
+  }
+
+  $: linePath = buildSmoothLinePath(actualPoints);
 
   $: areaPath = actualPoints.length
     ? [
-        `M ${actualPoints[0].x} ${MARGIN + CHART_HEIGHT}`,
+        `M ${actualPoints[0].x} ${CHART_TOP + CHART_HEIGHT}`,
         buildSmoothPath(actualPoints),
-        `L ${actualPoints[actualPoints.length - 1].x} ${MARGIN + CHART_HEIGHT}`,
+        `L ${actualPoints[actualPoints.length - 1].x} ${CHART_TOP + CHART_HEIGHT}`,
         'Z'
       ].join(' ')
     : '';
 
-  $: projectionPath = projectionPoints.length
-    ? [
-        `M ${actualPoints.length ? actualPoints[actualPoints.length - 1].x : projectionPoints[0].x} ${
-          actualPoints.length ? actualPoints[actualPoints.length - 1].y : projectionPoints[0].y
-        }`,
-        buildSmoothPath([actualPoints[actualPoints.length - 1], ...projectionPoints])
-      ].join(' ')
-    : '';
+  $: projectionPath = buildSmoothLinePath(
+    actualPoints.length
+      ? [actualPoints[actualPoints.length - 1], ...projectionPoints]
+      : projectionPoints
+  );
   $: peakEntry = sortedHistory.reduce(
     (acc, entry) => (acc && acc.momentum > entry.momentum ? acc : entry),
     sortedHistory[0] ?? null
@@ -218,6 +343,16 @@
     if (index === -1) return null;
     return actualPoints[index];
   })();
+
+  $: yAxisTicks = Array.from({ length: 5 }, (_, index) => {
+    const ratio = index / 4;
+    const value = domainMax - domainRange * ratio;
+    return {
+      value,
+      y: toChartY(value)
+    };
+  });
+  $: baselineY = baselineMomentum !== null ? toChartY(baselineMomentum) : null;
 
   $: lookbackSpan =
     sortedHistory.length > 1 ? Math.min(LOOKBACK_DAYS, sortedHistory.length - 1) : 0;
@@ -326,12 +461,47 @@
             </linearGradient>
           </defs>
           <rect
-            x={MARGIN}
-            y={MARGIN}
+            x={CHART_LEFT}
+            y={CHART_TOP}
             width={CHART_WIDTH}
             height={CHART_HEIGHT}
             class="chart-frame"
           />
+          {#each yAxisTicks as tick}
+            <line
+              x1={CHART_LEFT}
+              x2={CHART_LEFT + CHART_WIDTH}
+              y1={tick.y}
+              y2={tick.y}
+              class="chart-gridline"
+            />
+            <text
+              x={CHART_LEFT - 8}
+              y={tick.y}
+              class="chart-y-label"
+              text-anchor="end"
+              dominant-baseline="middle"
+            >
+              {formatMomentum(tick.value)}
+            </text>
+          {/each}
+          {#if baselineY !== null && baselineMomentum !== null}
+            <line
+              x1={CHART_LEFT}
+              x2={CHART_LEFT + CHART_WIDTH}
+              y1={baselineY}
+              y2={baselineY}
+              class="chart-baseline"
+            />
+            <text
+              x={CHART_LEFT + CHART_WIDTH - 8}
+              y={baselineY - 7}
+              class="chart-baseline-label"
+              text-anchor="end"
+            >
+              Baseline {formatMomentum(baselineMomentum)}
+            </text>
+          {/if}
           {#if areaPath}
             <path d={areaPath} fill={`url(#${gradientId})`} />
           {/if}
@@ -489,6 +659,28 @@
     fill: #f9fafb;
     stroke: #e5e7eb;
     stroke-width: 1;
+  }
+
+  .chart-gridline {
+    stroke: #e5e7eb;
+    stroke-width: 1;
+  }
+
+  .chart-y-label {
+    fill: #94a3b8;
+    font-size: 0.72rem;
+  }
+
+  .chart-baseline {
+    stroke: #f59e0b;
+    stroke-width: 1.5;
+    stroke-dasharray: 6 5;
+  }
+
+  .chart-baseline-label {
+    fill: #b45309;
+    font-size: 0.72rem;
+    font-weight: 700;
   }
 
   .chart-line {

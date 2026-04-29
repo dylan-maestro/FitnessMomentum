@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { toastMessage } from '$lib/stores';
   import { loadWorkouts } from '$lib/storage';
+  import { initReminderRuntime } from '$lib/reminderRuntime';
   import WorkoutList from './routes/WorkoutList.svelte';
   import InstallPrompt from '$lib/components/InstallPrompt.svelte';
   import Toast from '$lib/components/Toast.svelte';
@@ -11,6 +12,7 @@
   onMount(async () => {
     try {
       await loadWorkouts();
+      initReminderRuntime();
       loading = false;
     } catch (error) {
       console.error('Failed to load workouts:', error);

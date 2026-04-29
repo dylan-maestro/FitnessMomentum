@@ -14,6 +14,7 @@
   import WorkoutModal from './WorkoutModal.svelte';
   import HelpPage from './HelpPage.svelte';
   import SettingsModal from './SettingsModal.svelte';
+  import RemindersModal from './RemindersModal.svelte';
   import TemplateSelectionModal from './TemplateSelectionModal.svelte';
   import type { Workout } from '$lib/types';
   import { WORKOUT_TEMPLATES, type WorkoutTemplate } from '$lib/templates';
@@ -24,6 +25,7 @@
   let showModal = false;
   let showHelpPage = false;
   let showSettingsModal = false;
+  let showRemindersModal = false;
   let showTemplateModal = false;
   let showWebAppBar = false;
   // Use Partial<Workout> to allow templates (no ID)
@@ -41,6 +43,7 @@
     | 'workoutType'
     | 'momentumFactor'
     | 'distanceInputMode'
+    | 'reminders'
   > &
     Partial<
       Pick<
@@ -388,6 +391,10 @@
     showSettingsModal = true;
   }
 
+  function handleReminders() {
+    showRemindersModal = true;
+  }
+
   function handleHelp() {
     showHelpPage = true;
   }
@@ -420,6 +427,10 @@
 
   function handleSettingsClose() {
     showSettingsModal = false;
+  }
+
+  function handleRemindersClose() {
+    showRemindersModal = false;
   }
 
   function handleHelpClose() {
@@ -469,6 +480,25 @@
             <circle cx="12" cy="16.85" r="0.9" fill="currentColor" />
           </svg>
         </button>
+        <button class="icon-button app-bar-button" on:click={handleReminders} aria-label="Reminders">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path
+              d="M18 10.5a6 6 0 0 0-12 0c0 3.2-1.25 4.6-2.1 5.55A.6.6 0 0 0 4.35 17h15.3a.6.6 0 0 0 .45-.95C19.25 15.1 18 13.7 18 10.5Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M9.75 19a2.35 2.35 0 0 0 4.5 0"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
         <button class="icon-button app-bar-button" on:click={handleSettings} aria-label="Settings">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path
@@ -496,6 +526,25 @@
               stroke-linejoin="round"
             />
             <circle cx="12" cy="16.85" r="0.9" fill="currentColor" />
+          </svg>
+        </button>
+        <button class="icon-button" on:click={handleReminders} aria-label="Reminders">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path
+              d="M18 10.5a6 6 0 0 0-12 0c0 3.2-1.25 4.6-2.1 5.55A.6.6 0 0 0 4.35 17h15.3a.6.6 0 0 0 .45-.95C19.25 15.1 18 13.7 18 10.5Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M9.75 19a2.35 2.35 0 0 0 4.5 0"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
         <button class="icon-button" on:click={handleSettings} aria-label="Settings">
@@ -638,6 +687,12 @@
   {#if showSettingsModal}
     <SettingsModal
       on:close={handleSettingsClose}
+    />
+  {/if}
+
+  {#if showRemindersModal}
+    <RemindersModal
+      on:close={handleRemindersClose}
     />
   {/if}
 </div>

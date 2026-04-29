@@ -11,12 +11,48 @@
     close: void;
   }>();
 
+  type FilterOption = {
+    label: string;
+    matches: (template: WorkoutTemplate) => boolean;
+  };
+
+  const filterOptions: FilterOption[] = [
+    {
+      label: 'Common',
+      matches: (template) => template.tags?.has('common') ?? false
+    },
+    {
+      label: 'Weight',
+      matches: (template) => template.workoutType === 'weight'
+    },
+    {
+      label: 'Distance',
+      matches: (template) => template.workoutType === 'distance'
+    },
+    {
+      label: 'Time',
+      matches: (template) => template.workoutType === 'time'
+    }
+  ];
+
+  let activeFilter = filterOptions[0].label;
+  $: activeFilterOption =
+    filterOptions.find((filterOption) => filterOption.label === activeFilter) ?? filterOptions[0];
+  $: filteredTemplates = WORKOUT_TEMPLATES.filter(activeFilterOption.matches);
+
   function handleSelect(template: WorkoutTemplate) {
     dispatch('select', template);
   }
 
   function handleQuickAdd(template: WorkoutTemplate) {
     dispatch('add', template);
+  }
+
+  function handleCardKeydown(event: KeyboardEvent, template: WorkoutTemplate) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      handleQuickAdd(template);
+    }
   }
 
   function handleCustom() {
@@ -81,9 +117,28 @@
         <span>OR</span>
       </div>
 
+      <div class="filter-bar" aria-label="Exercise filters">
+        {#each filterOptions as filterOption}
+          <button
+            type="button"
+            class:active={activeFilter === filterOption.label}
+            aria-pressed={activeFilter === filterOption.label}
+            on:click={() => (activeFilter = filterOption.label)}
+          >
+            {filterOption.label}
+          </button>
+        {/each}
+      </div>
+
       <div class="templates-grid">
-        {#each WORKOUT_TEMPLATES as template}
-          <div class="template-card">
+        {#each filteredTemplates as template}
+          <div
+            class="template-card"
+            role="button"
+            tabindex="0"
+            on:click={() => handleQuickAdd(template)}
+            on:keydown={(event) => handleCardKeydown(event, template)}
+          >
             <div class="template-icon" aria-hidden="true">
               {@html getIconMarkup(template)}
             </div>
@@ -98,22 +153,19 @@
                 {template.targetFrequency === 1 ? 'Daily' : `Every ${template.targetFrequency} days`}
               </p>
             </div>
-            <div class="template-actions">
-              <button
-                type="button"
-                class="action-button primary"
-                on:click={() => handleQuickAdd(template)}
-              >
-                Add
-              </button>
-              <button
-                type="button"
-                class="action-button secondary"
-                on:click={() => handleSelect(template)}
-              >
-                Tweak
-              </button>
-            </div>
+            <button
+              type="button"
+              class="tweak-button"
+              aria-label={`Tweak ${template.name}`}
+              on:click|stopPropagation={() => handleSelect(template)}
+            >
+              <svg viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+                <path
+                  d="M32 64C14.3 64 0 78.3 0 96s14.3 32 32 32l86.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48L480 128c17.7 0 32-14.3 32-32s-14.3-32-32-32L265.3 64C253 35.7 224.8 16 192 16s-61 19.7-73.3 48L32 64zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32l246.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48l54.7 0c17.7 0 32-14.3 32-32s-14.3-32-32-32l-54.7 0c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48L32 224zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32l54.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48L480 448c17.7 0 32-14.3 32-32s-14.3-32-32-32l-246.7 0c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48L32 384z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
           </div>
         {/each}
       </div>
@@ -198,23 +250,72 @@
     margin-bottom: 1.5rem;
   }
 
+  .filter-bar {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.25rem 0 0.85rem;
+    margin-bottom: 0.15rem;
+    background: white;
+  }
+
+  .filter-bar button {
+    flex: 0 0 auto;
+    padding: 0.35rem 0.7rem;
+    border: 1px solid #d8d8d8;
+    border-radius: 999px;
+    background: white;
+    color: #555;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 0.2s,
+      border-color 0.2s,
+      color 0.2s;
+  }
+
+  .filter-bar button:hover,
+  .filter-bar button:focus-visible {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    outline: none;
+  }
+
+  .filter-bar button.active {
+    border-color: var(--color-primary);
+    background: var(--color-primary);
+    color: white;
+  }
+
   .template-card {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.85rem 1rem;
+    padding: 0.85rem 3rem 0.85rem 1rem;
     background: white;
     border: 1px solid #e0e0e0;
     border-radius: 12px;
     transition: all 0.2s;
     width: 100%;
+    cursor: pointer;
+    text-align: left;
   }
 
-  .template-card:hover {
+  .template-card:hover,
+  .template-card:focus-visible {
     border-color: var(--color-primary);
     background: var(--color-primary-soft);
     transform: translateY(-1px);
     box-shadow: 0 2px 8px var(--color-primary-shadow);
+  }
+
+  .template-card:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 
   .template-icon {
@@ -250,45 +351,36 @@
     color: #666;
   }
 
-  .template-actions {
+  .tweak-button {
+    position: absolute;
+    top: 0.85rem;
+    right: 0.85rem;
+    width: 1rem;
+    height: 1rem;
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-left: auto;
-    white-space: nowrap;
-  }
-
-  .action-button {
-    flex: 0 0 auto;
-    padding: 0.4rem 0.7rem;
-    border-radius: 8px;
-    border: 1px solid transparent;
-    font-weight: 600;
-    font-size: 0.85rem;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #a2a2a2;
     cursor: pointer;
-    transition: all 0.2s;
+    transition:
+      background 0.2s,
+      color 0.2s;
   }
 
-  .action-button.primary {
-    background: var(--color-primary);
-    color: white;
-    border-color: var(--color-primary);
+  .tweak-button:hover,
+  .tweak-button:focus-visible {
+    background: rgba(0, 0, 0, 0.06);
+    color: #222;
+    outline: none;
   }
 
-  .action-button.primary:hover {
-    background: var(--color-primary-hover);
-    border-color: var(--color-primary-hover);
-  }
-
-  .action-button.secondary {
-    background: white;
-    color: #333;
-    border-color: #d0d0d0;
-  }
-
-  .action-button.secondary:hover {
-    border-color: #999;
-    color: #111;
+  .tweak-button svg {
+    width: 1.15rem;
+    height: 1.15rem;
   }
 
   .divider {

@@ -2,14 +2,12 @@
   import { updateWorkout } from "$lib/storage";
   import { showToast, settings } from "$lib/stores";
   import type { Workout } from "$lib/types";
-  import { createEventDispatcher, onDestroy } from "svelte";
+  import { createEventDispatcher, onDestroy, tick } from "svelte";
   import {
     applyMomentumUpdate,
-    DECAY_RATE_PER_DAY,
   } from "$lib/momentum";
   import { getNow, currentDate } from "$lib/currentDate";
   import { normalizeDate, daysBetween } from "$lib/date";
-  import { calculateReps } from "$lib/reps";
   import {
     fromMetricDistance,
     fromMetricLapDistance,
@@ -20,7 +18,7 @@
   } from "$lib/units";
   import MomentumHistoryModal from "$lib/components/MomentumHistoryModal.svelte";
   import { WORKOUT_TEMPLATES } from "$lib/templates";
-  import { getDefaultMomentumFactor } from "$lib/workoutTypes";
+  import { getGoalProgress } from "$lib/goalProgress";
   import AppIconSvg from "../../icon-source/app-icon.svg?raw";
 
   type WorkoutWithBase = Workout & { baseVolume?: number };
@@ -123,6 +121,13 @@
     return Math.max(storedPeak, Number(target.momentum) || 0, historyPeak);
   }
 
+  function roundPeakMomentumForMilestone(momentum: number): number {
+    if (!Number.isFinite(momentum) || momentum <= 0) {
+      return 0;
+    }
+    return Math.round(momentum * 10) / 10;
+  }
+
   function clearPeakCelebrationTimer() {
     if (peakCelebrationTimeout) {
       clearTimeout(peakCelebrationTimeout);
@@ -142,8 +147,10 @@
   function persistLoggedWorkout(updated: WorkoutWithBase, now: number) {
     const today = normalizeDate(new Date(now));
     const previousPeak = getAllTimeHighMomentum(localWorkout);
-    const allTimeHighMomentum = Math.max(previousPeak, updated.momentum);
-    const reachedNewPeak = updated.momentum > previousPeak + 1e-6;
+    const reachedNewPeak =
+      roundPeakMomentumForMilestone(updated.momentum) >
+      roundPeakMomentumForMilestone(previousPeak);
+    const allTimeHighMomentum = reachedNewPeak ? updated.momentum : previousPeak;
     const shouldCelebratePeak =
       reachedNewPeak && localWorkout.lastAllTimeHighCelebratedOn !== today;
 
@@ -379,6 +386,43 @@
     return `${String(minutes).padStart(2, "0")}:${String(remainderSeconds).padStart(2, "0")}`;
   }
 
+  function countDigitsBeforeCaret(value: string, caretPosition: number | null): number {
+    if (caretPosition === null) {
+      return value.replace(/\D/g, "").length;
+    }
+
+    return value.slice(0, caretPosition).replace(/\D/g, "").length;
+  }
+
+  function getCaretPositionForDigitCount(value: string, digitCount: number): number {
+    if (digitCount <= 0) {
+      return 0;
+    }
+
+    let seenDigits = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      if (/\d/.test(value[index])) {
+        seenDigits += 1;
+      }
+      if (seenDigits >= digitCount) {
+        return index + 1;
+      }
+    }
+
+    return value.length;
+  }
+
+  async function restoreTimeInputCaret(target: HTMLInputElement, digitCount: number) {
+    await tick();
+
+    if (document.activeElement !== target) {
+      return;
+    }
+
+    const caretPosition = getCaretPositionForDigitCount(target.value, digitCount);
+    target.setSelectionRange(caretPosition, caretPosition);
+  }
+
   function formatDurationWords(seconds: number): string {
     const safeSeconds = Math.max(0, Math.round(seconds));
     const minutes = Math.floor(safeSeconds / 60);
@@ -463,8 +507,6 @@
         : unitLabel;
   $: timeVolumeUnitLabel = `${unitLabel}.min`;
   $: distanceInputMode = localWorkout.distanceInputMode ?? "simple";
-  $: momentumFactor =
-    localWorkout.momentumFactor ?? getDefaultMomentumFactor(workoutType);
   $: logButtonLabel =
     workoutType === "distance"
       ? distanceInputMode === "laps"
@@ -476,16 +518,10 @@
 
   // Reactive derivations for progress tracking
   $: today = $currentDate;
-
-  // Use persistent daily volume if the last log date matches today
-  $: isSameDay =
-    localWorkout.lastLoggedAt &&
-    normalizeDate(localWorkout.lastLoggedAt) === today;
-  $: todayVolume = isSameDay ? localWorkout.dailyVolume || 0 : 0;
-
-  // Calculate stable target based on start-of-day momentum
-  $: momentumFromLogs = todayVolume * momentumFactor;
-  $: startOfDayMomentum = Math.max(0, localWorkout.momentum - momentumFromLogs);
+  $: goalProgress = getGoalProgress(localWorkout as Workout, $settings, today);
+  $: todayVolume = goalProgress.todayVolume;
+  $: effectiveWeight = goalProgress.effectiveWeight;
+  $: distancePerLap = goalProgress.distancePerLap;
   $: bodyweightContributionMultiplier = Math.min(
     1,
     Math.max(
@@ -498,20 +534,8 @@
     ),
   );
   $: usesBodyweightContribution = bodyweightContributionMultiplier > 0;
-  $: effectiveWeight = usesBodyweightContribution
-    ? Math.max(
-        1,
-        $settings.bodyWeight * bodyweightContributionMultiplier + localWorkout.weight,
-      )
-    : Math.max(1, localWorkout.weight);
-  // For laps-based distance workouts, weight stores distance per lap
-  $: distancePerLap =
-    workoutType === "distance" && distanceInputMode === "laps"
-      ? localWorkout.weight
-      : 0;
-  $: decayRate = localWorkout.decay ?? DECAY_RATE_PER_DAY;
   $: targetIncreasePercentage = localWorkout.targetIncreasePercentage ?? 0;
-  $: targetFrequency = localWorkout.targetFrequency ?? 1;
+  $: targetFrequency = goalProgress.targetFrequency;
   $: maxIncreasePercent = getMaxIncreasePercent(targetFrequency);
   $: progressionPercent = targetIncreasePercentage * 100;
   $: intensityRatio =
@@ -533,31 +557,6 @@
         ? "mid"
         : "low";
 
-  // Calculate days elapsed since last effective workout for catch-up
-  $: daysSinceLastLog = (() => {
-    // If we already logged today, we want to know how many days had passed BEFORE today's log.
-    // We use previousLoggedAt if available.
-    if (isSameDay) {
-      if (localWorkout.previousLoggedAt) {
-        const prev = normalizeDate(localWorkout.previousLoggedAt);
-        return Math.max(1, daysBetween(prev, today));
-      }
-      // If logged today but no previous history, assume standard 1 day (or 0 catchup if brand new)
-      // Defaulting to 1 ensures at least "maintenance" behavior is shown
-      return 1;
-    }
-
-    // If NOT logged today, use lastLoggedAt
-    if (localWorkout.lastLoggedAt) {
-      const last = normalizeDate(localWorkout.lastLoggedAt);
-      // If future date or weird state, min 1
-      return Math.max(1, daysBetween(last, today));
-    }
-
-    // Never logged (new workout), default to 1 (calculates based on 1 day decay recovery if any momentum exists)
-    return 1;
-  })();
-
   // Last active display
   $: lastActiveDisplay = (() => {
     if (!localWorkout.lastLoggedAt) return "Never";
@@ -576,28 +575,8 @@
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   })();
 
-  // Calculate stable target
-  $: dailyTargetReps = calculateReps(
-    startOfDayMomentum,
-    localWorkout.baseVolume ?? 0,
-    effectiveWeight,
-    decayRate,
-    targetIncreasePercentage,
-    daysSinceLastLog,
-    targetFrequency,
-    momentumFactor,
-    workoutType === "distance" ? "none" : "ceil",
-  );
-  $: dailyTargetTonnage =
-    workoutType === "distance"
-      ? dailyTargetReps
-      : dailyTargetReps * effectiveWeight;
-  $: progressPercent =
-    dailyTargetTonnage > 0
-      ? Math.min(100, (todayVolume / dailyTargetTonnage) * 100)
-      : todayVolume > 0
-        ? 100
-        : 0;
+  $: dailyTargetTonnage = goalProgress.dailyTargetVolume;
+  $: progressPercent = goalProgress.progressPercent;
 
   $: if (workout !== localWorkout) {
     if (localWorkout.id !== workout.id) {
@@ -623,7 +602,7 @@
         );
 
   // For laps-based, calculate recommended laps (rounded up) and distance per lap
-  $: remainingVolume = dailyTargetTonnage - todayVolume;
+  $: remainingVolume = goalProgress.remainingVolume;
   // For laps-based, use the current input value (if manually entered) or the stored distance per lap
   $: currentLapDistanceInput =
     workoutType === "distance" && distanceInputMode === "laps" && repsInput
@@ -703,11 +682,19 @@
 
   function handleRepsInput(event: Event) {
     const target = event.currentTarget as HTMLInputElement;
+    const digitCaretPosition =
+      workoutType === "time"
+        ? countDigitsBeforeCaret(target.value, target.selectionStart)
+        : 0;
     repsInput =
       workoutType === "time"
         ? formatMicrowaveTimeInput(parseMicrowaveTimeInput(target.value))
         : target.value;
     hasManualReps = true;
+
+    if (workoutType === "time") {
+      void restoreTimeInputCaret(target, digitCaretPosition);
+    }
   }
 
   function getPrimaryInputStep(): number {
@@ -1222,6 +1209,9 @@
 
     if (!Number.isFinite(newWeight)) return;
     if (!usesBodyweightContribution && newWeight <= 0) return;
+    if (usesBodyweightContribution && newWeight === 0) {
+      target.value = "";
+    }
 
     const metricWeight = toMetricWeight(newWeight, unitLabel);
     if (Math.abs(metricWeight - localWorkout.weight) > 0.0001) {
@@ -1344,7 +1334,8 @@
             id="weight-{localWorkout.id}"
             type="number"
             step="any"
-            value={fromMetricWeight(localWorkout.weight, unitLabel)}
+            value={usesBodyweightContribution && localWorkout.weight === 0 ? "" : fromMetricWeight(localWorkout.weight, unitLabel)}
+            placeholder={usesBodyweightContribution ? "0" : undefined}
             on:change={handleWeightChange}
             on:click|stopPropagation
           />
@@ -2186,7 +2177,7 @@
   @container (max-width: 380px) {
     .header-row {
       display: grid;
-      grid-template-columns: 1fr 2fr;
+      grid-template-columns: minmax(52px, 96px) minmax(0, 1fr);
       grid-template-areas:
         "title title"
         "icon pill"
@@ -2214,13 +2205,17 @@
     .workout-icon {
       grid-area: icon;
       width: 100%;
-      height: 100%;
+      height: auto;
+      aspect-ratio: 1;
+      align-self: start;
+      min-width: 52px;
     }
 
     .momentum-pill {
       grid-area: pill;
       width: 100%;
-      height: 100%;
+      min-width: 0;
+      min-height: 72px;
       padding: 0.6rem;
     }
 

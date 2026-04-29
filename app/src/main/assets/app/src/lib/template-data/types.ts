@@ -13,5 +13,6 @@ export type WorkoutTemplate = Pick<
   | 'distanceInputMode'
 > & {
   icon?: string;
+  tags?: ReadonlySet<string>;
 };
 
