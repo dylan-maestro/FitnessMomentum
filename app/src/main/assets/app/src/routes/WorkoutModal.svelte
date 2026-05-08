@@ -11,6 +11,8 @@
   type WorkoutWithBase = Workout & { baseVolume: number };
 
   export let workout: Partial<WorkoutWithBase> | null = null;
+  export let existingWorkouts: Workout[] = [];
+  export let focusNameOnOpen = false;
 
   const dispatch = createEventDispatcher();
 
@@ -49,6 +51,8 @@
   let reminderMode: WorkoutReminderSettings['mode'] = workout?.reminders?.mode ?? 'global';
   let reminderIdealTime = workout?.reminders?.idealTime ?? '';
   let reminderLastChanceTime = workout?.reminders?.lastChanceTime ?? '';
+  let showDeleteConfirmation = false;
+  let nameInputElement: HTMLInputElement | null = null;
 
   $: hasPersistedWorkout = Boolean(workout?.id);
   $: globalRemindersEnabled = $settings.reminders.enabled;
@@ -75,6 +79,27 @@
   function normalizeReminderInput(value: string): string | null {
     const trimmed = value?.trim() ?? '';
     return trimmed || null;
+  }
+
+  function normalizeExerciseName(value: string): string {
+    return value.trim().toLocaleLowerCase();
+  }
+
+  function hasDuplicateExerciseName(value: string): boolean {
+    const normalizedName = normalizeExerciseName(value);
+    const currentId = workout?.id;
+
+    return existingWorkouts.some(
+      (existingWorkout) =>
+        existingWorkout.id !== currentId &&
+        normalizeExerciseName(existingWorkout.name) === normalizedName
+    );
+  }
+
+  async function focusNameInput() {
+    await tick();
+    nameInputElement?.focus();
+    nameInputElement?.setSelectionRange(nameInputElement.value.length, nameInputElement.value.length);
   }
 
   function getWorkoutReminders(): WorkoutReminderSettings {
@@ -728,6 +753,11 @@
     baseTimeInputDisplay = '';
     momentumTouched = false;
     showSuperAdvanced = false;
+    showDeleteConfirmation = false;
+
+    if (focusNameOnOpen) {
+      void focusNameInput();
+    }
   }
 
   // New workouts start at zero momentum unless the user explicitly overrides it.
@@ -747,6 +777,12 @@
 
     if (!trimmedName) {
       showToast('Please enter an exercise name');
+      return;
+    }
+
+    if (hasDuplicateExerciseName(trimmedName)) {
+      showToast('An exercise with this name already exists');
+      void focusNameInput();
       return;
     }
 
@@ -900,6 +936,27 @@
     dispatch('close');
   }
 
+  function requestDeleteConfirmation() {
+    if (!workout?.id) {
+      return;
+    }
+
+    showDeleteConfirmation = true;
+  }
+
+  function cancelDeleteConfirmation() {
+    showDeleteConfirmation = false;
+  }
+
+  function confirmDelete() {
+    if (!workout?.id) {
+      return;
+    }
+
+    dispatch('delete', workout.id);
+    dispatch('close');
+  }
+
   let overlayElement: HTMLDivElement | null = null;
 
   function handleOverlayClick(event: MouseEvent) {
@@ -964,6 +1021,7 @@
         <input
           id="name"
           type="text"
+          bind:this={nameInputElement}
           bind:value={name}
           placeholder="e.g., Push-ups"
           maxlength="50"
@@ -1690,8 +1748,20 @@
     </div>
 
     <div class="modal-footer">
-      <button class="cancel-button" on:click={handleClose}>Cancel</button>
-      <button class="save-button" on:click={handleSave}>Save</button>
+      {#if workout?.id && showDeleteConfirmation}
+        <div class="delete-confirmation" role="alert">
+          <strong>Delete {name.trim() || workout.name || 'this exercise'}?</strong>
+          <span>All workout history for this exercise will be permanently lost.</span>
+        </div>
+        <button type="button" class="cancel-button" on:click={cancelDeleteConfirmation}>Keep</button>
+        <button type="button" class="delete-button confirm-delete" on:click={confirmDelete}>Delete Permanently</button>
+      {:else}
+        {#if workout?.id}
+          <button type="button" class="delete-button" on:click={requestDeleteConfirmation}>Delete</button>
+        {/if}
+        <button type="button" class="cancel-button" on:click={handleClose}>Cancel</button>
+        <button type="button" class="save-button" on:click={handleSave}>Save</button>
+      {/if}
     </div>
   </div>
 </div>
@@ -1835,6 +1905,7 @@
   .tab-button:focus-visible,
   .calculate-button:focus-visible,
   .close-button:focus-visible,
+  .delete-button:focus-visible,
   .cancel-button:focus-visible,
   .save-button:focus-visible {
       outline: 2px solid var(--color-primary);
@@ -2375,19 +2446,55 @@
   .modal-footer {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     gap: 1rem;
-    padding: 1.5rem;
+    padding: 0.75rem 1.5rem;
     border-top: 1px solid #eee;
     background: white;
   }
 
+  .delete-confirmation {
+    margin-right: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    color: #8a1c1c;
+    font-size: 0.85rem;
+    line-height: 1.25;
+  }
+
+  .delete-confirmation span {
+    color: #a33a3a;
+  }
+
+  .delete-button {
+    margin-right: 0;
+    padding: 0.5rem 0.9rem;
+    border: 1px solid #ffcdd2;
+    border-radius: 6px;
+    background: #fff5f5;
+    color: #c62828;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .delete-button:hover {
+    background: #ffebee;
+    border-color: #ef9a9a;
+  }
+
+  .modal-footer > .delete-button:not(.confirm-delete) {
+    margin-right: auto;
+  }
 
   .cancel-button,
   .save-button {
-    padding: 0.75rem 1.5rem;
+    padding: 0.5rem 1.1rem;
     border: none;
     border-radius: 6px;
-    font-size: 1rem;
+    font-size: 0.95rem;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.2s;

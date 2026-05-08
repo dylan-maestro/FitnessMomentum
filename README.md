@@ -81,6 +81,12 @@ Build outputs:
 - `npm run build:android` writes WebView assets to `app/src/main/assets/www/`
 - `npm run build:web` writes the web/PWA build to `app/src/main/assets/app/dist/`
 
+### Android WebView Keyboard Resizing
+
+Android 15+ forces edge-to-edge layout for apps targeting recent SDKs, so `android:windowSoftInputMode="adjustResize"` is not enough to make a WebView shrink above the soft keyboard. If keyboard handling regresses, do not spend time trying to fix it only with `100vh`, `visualViewport`, `scrollIntoView()`, or `getWindowVisibleDisplayFrame()`.
+
+The native shell wraps the WebView in a `FrameLayout` and uses `WindowInsetsAnimationCompat` to apply bottom padding to that container as the IME animates. This physically changes the WebView bounds, causing Chromium's `window.innerHeight` to update so the shared Svelte layout behaves like the PWA.
+
 Key directories:
 
 ```text

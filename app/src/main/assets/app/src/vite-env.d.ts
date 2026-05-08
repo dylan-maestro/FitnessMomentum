@@ -14,6 +14,7 @@ interface Window {
     getNotificationPermissionState?: () => string;
     requestNotificationPermission?: () => void;
     syncReminderSnapshot?: (snapshotJson: string) => void;
+    shareImage?: (base64Png: string, filename: string, title: string) => void;
   };
   __onAndroidNotificationPermissionResult?: (state: string) => void;
 }

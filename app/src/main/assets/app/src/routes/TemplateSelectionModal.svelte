@@ -36,6 +36,7 @@
   ];
 
   let activeFilter = filterOptions[0].label;
+  let expandedTemplateName: string | null = null;
   $: activeFilterOption =
     filterOptions.find((filterOption) => filterOption.label === activeFilter) ?? filterOptions[0];
   $: filteredTemplates = WORKOUT_TEMPLATES.filter(activeFilterOption.matches);
@@ -131,41 +132,93 @@
       </div>
 
       <div class="templates-grid">
-        {#each filteredTemplates as template}
-          <div
-            class="template-card"
-            role="button"
-            tabindex="0"
-            on:click={() => handleQuickAdd(template)}
-            on:keydown={(event) => handleCardKeydown(event, template)}
-          >
-            <div class="template-icon" aria-hidden="true">
-              {@html getIconMarkup(template)}
+        {#each filteredTemplates as template (template.name)}
+          <div class="template-group">
+            <div class="parent-template">
+              <div
+                class="template-card"
+                role="button"
+                tabindex="0"
+                on:click={() => handleQuickAdd(template)}
+                on:keydown={(event) => handleCardKeydown(event, template)}
+              >
+                <div class="template-icon" aria-hidden="true">
+                  {@html getIconMarkup(template)}
+                </div>
+                <div class="template-info">
+                  <h3>{template.name}</h3>
+                  <p class="template-details">
+                    {template.workoutType === 'weight'
+                      ? (template.isBodyweight ? 'Bodyweight' : 'Weight-based')
+                      : template.workoutType === 'distance'
+                        ? 'Distance-based'
+                        : 'Time-based'} •
+                    {template.targetFrequency === 1 ? 'Daily' : `Every ${template.targetFrequency} days`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  class="tweak-button"
+                  aria-label={`Tweak ${template.name}`}
+                  on:click|stopPropagation={() => handleSelect(template)}
+                >
+                  <svg viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+                    <path
+                      d="M32 64C14.3 64 0 78.3 0 96s14.3 32 32 32l86.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48L480 128c17.7 0 32-14.3 32-32s-14.3-32-32-32L265.3 64C253 35.7 224.8 16 192 16s-61 19.7-73.3 48L32 64zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32l246.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48l54.7 0c17.7 0 32-14.3 32-32s-14.3-32-32-32l-54.7 0c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48L32 224zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32l54.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48L480 448c17.7 0 32-14.3 32-32s-14.3-32-32-32l-246.7 0c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48L32 384z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                </button>
+              </div>
+
+              {#if template.variants?.length}
+                <button
+                  type="button"
+                  class="variants-button"
+                  aria-expanded={expandedTemplateName === template.name}
+                  on:click|preventDefault|stopPropagation={() => {
+                    expandedTemplateName =
+                      expandedTemplateName === template.name ? null : template.name;
+                  }}
+                >
+                  {expandedTemplateName === template.name ? 'hide variants' : 'see variants'}
+                </button>
+              {/if}
             </div>
-            <div class="template-info">
-              <h3>{template.name}</h3>
-              <p class="template-details">
-                {template.workoutType === 'weight'
-                  ? (template.isBodyweight ? 'Bodyweight' : 'Weight-based')
-                  : template.workoutType === 'distance'
-                    ? 'Distance-based'
-                    : 'Time-based'} •
-                {template.targetFrequency === 1 ? 'Daily' : `Every ${template.targetFrequency} days`}
-              </p>
-            </div>
-            <button
-              type="button"
-              class="tweak-button"
-              aria-label={`Tweak ${template.name}`}
-              on:click|stopPropagation={() => handleSelect(template)}
-            >
-              <svg viewBox="0 0 512 512" aria-hidden="true" focusable="false">
-                <path
-                  d="M32 64C14.3 64 0 78.3 0 96s14.3 32 32 32l86.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48L480 128c17.7 0 32-14.3 32-32s-14.3-32-32-32L265.3 64C253 35.7 224.8 16 192 16s-61 19.7-73.3 48L32 64zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32l246.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48l54.7 0c17.7 0 32-14.3 32-32s-14.3-32-32-32l-54.7 0c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48L32 224zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32l54.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48L480 448c17.7 0 32-14.3 32-32s-14.3-32-32-32l-246.7 0c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48L32 384z"
-                  fill="currentColor"
-                />
-              </svg>
-            </button>
+
+            {#if template.variants?.length && expandedTemplateName === template.name}
+              <div class="variant-list">
+                {#each template.variants as variant}
+                  <div
+                    class="template-card variant-card"
+                    role="button"
+                    tabindex="0"
+                    on:click={() => handleQuickAdd(variant)}
+                    on:keydown={(event) => handleCardKeydown(event, variant)}
+                  >
+                    <div class="template-icon variant-icon" aria-hidden="true">
+                      {@html getIconMarkup(variant)}
+                    </div>
+                    <div class="template-info">
+                      <h3>{variant.name}</h3>
+                    </div>
+                    <button
+                      type="button"
+                      class="tweak-button"
+                      aria-label={`Tweak ${variant.name}`}
+                      on:click|stopPropagation={() => handleSelect(variant)}
+                    >
+                      <svg viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+                        <path
+                          d="M32 64C14.3 64 0 78.3 0 96s14.3 32 32 32l86.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48L480 128c17.7 0 32-14.3 32-32s-14.3-32-32-32L265.3 64C253 35.7 224.8 16 192 16s-61 19.7-73.3 48L32 64zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32l246.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48l54.7 0c17.7 0 32-14.3 32-32s-14.3-32-32-32l-54.7 0c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48L32 224zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32l54.7 0c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48L480 448c17.7 0 32-14.3 32-32s-14.3-32-32-32l-246.7 0c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48L32 384z"
+                          fill="currentColor"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
@@ -250,6 +303,14 @@
     margin-bottom: 1.5rem;
   }
 
+  .template-group {
+    display: grid;
+  }
+
+  .parent-template {
+    position: relative;
+  }
+
   .filter-bar {
     position: sticky;
     top: 0;
@@ -326,6 +387,67 @@
     display: inline-block;
   }
 
+  .variants-button {
+    position: absolute;
+    right: 0.7rem;
+    bottom: 0;
+    transform: translateY(50%);
+    justify-self: end;
+    padding: 0.22rem 0.55rem;
+    border: 1px solid #d3d3d3;
+    border-radius: 999px;
+    background: #f7f7f7;
+    color: #666;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 2;
+    transition:
+      background 0.2s,
+      border-color 0.2s,
+      color 0.2s;
+  }
+
+  .variants-button:hover,
+  .variants-button:focus-visible {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    outline: none;
+  }
+
+  .variant-list {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 1rem;
+    margin-left: 1.25rem;
+    padding-left: 0.75rem;
+    border-left: 2px solid #e0e0e0;
+  }
+
+  .variant-card {
+    gap: 0.6rem;
+    padding: 0.55rem 2.6rem 0.55rem 0.7rem;
+    background: #f5f5f5;
+    border-color: #dedede;
+    color: #555;
+  }
+
+  .variant-card:hover,
+  .variant-card:focus-visible {
+    background: #eceff1;
+    border-color: #b9c2c8;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .variant-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 9px;
+    opacity: 0.8;
+  }
+
   :global(.template-icon svg) {
     width: 100%;
     height: 100%;
@@ -343,6 +465,12 @@
     font-size: 1rem;
     color: #333;
     font-weight: 600;
+  }
+
+  .variant-card .template-info h3 {
+    margin: 0;
+    font-size: 0.92rem;
+    color: #555;
   }
 
   .template-details {

@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -16,25 +17,31 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.updatePadding
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
+    private lateinit var webViewContainer: FrameLayout
     private lateinit var assetLoader: WebViewAssetLoader
     private var latestSystemBarInsets = Insets.NONE
     private var legacyStorageMigrationInProgress = false
@@ -100,9 +107,18 @@ class MainActivity : AppCompatActivity() {
         configureSystemBarInsets()
         configureWebView()
         configureBackNavigation()
-        
-        setContentView(webView)
-        ViewCompat.requestApplyInsets(webView)
+
+        webViewContainer = FrameLayout(this)
+        webViewContainer.addView(
+            webView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        setContentView(webViewContainer)
+        installKeyboardResizeCallback()
+        ViewCompat.requestApplyInsets(webViewContainer)
         ReminderScheduler.scheduleFromStored(this)
         
         webView.loadUrl(if (legacyStorageMigrationInProgress) LEGACY_APP_URL else APP_URL)
@@ -130,6 +146,7 @@ class MainActivity : AppCompatActivity() {
             """
             (() => {
               const root = document.documentElement;
+              if (!root) return;
               root.style.setProperty('--android-safe-area-top', '${top}px');
               root.style.setProperty('--android-safe-area-right', '${right}px');
               root.style.setProperty('--android-safe-area-bottom', '${bottom}px');
@@ -138,6 +155,41 @@ class MainActivity : AppCompatActivity() {
             """.trimIndent(),
             null
         )
+    }
+
+    /**
+     * Physically resizes the WebView container in sync with the keyboard animation.
+     * This is the only reliable approach on Android 15+ (edge-to-edge forced, adjustResize
+     * has no effect). Shrinking the container changes window.innerHeight inside the WebView,
+     * so fixed/flex layouts reflow naturally above the keyboard — identical to PWA behaviour.
+     */
+    private fun installKeyboardResizeCallback() {
+        ViewCompat.setWindowInsetsAnimationCallback(
+            webViewContainer,
+            object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_STOP) {
+                override fun onProgress(
+                    insets: WindowInsetsCompat,
+                    runningAnimations: MutableList<WindowInsetsAnimationCompat>
+                ): WindowInsetsCompat {
+                    applyKeyboardPadding(insets)
+                    return insets
+                }
+
+                override fun onEnd(animation: WindowInsetsAnimationCompat) {
+                    super.onEnd(animation)
+                    ViewCompat.getRootWindowInsets(webViewContainer)
+                        ?.let { applyKeyboardPadding(it) }
+                }
+            }
+        )
+    }
+
+    private fun applyKeyboardPadding(insets: WindowInsetsCompat) {
+        val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+        val navInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+        // Subtract nav bar so it isn't double-counted with the CSS safe-area var inside the page.
+        val keyboardPadding = maxOf(0, imeInsets.bottom - navInsets.bottom)
+        webViewContainer.updatePadding(bottom = keyboardPadding)
     }
 
     private fun configureWebView() {
@@ -391,6 +443,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun sharePngImage(base64Png: String, filename: String, title: String) {
+        try {
+            val safeFilename = filename
+                .replace(Regex("[^A-Za-z0-9._-]"), "-")
+                .ifBlank { "fitness-momentum-progress.png" }
+            val imageBytes = Base64.decode(base64Png, Base64.DEFAULT)
+            val shareDir = File(cacheDir, "share").apply {
+                mkdirs()
+            }
+            val imageFile = File(shareDir, safeFilename)
+            imageFile.writeBytes(imageBytes)
+
+            val imageUri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                imageFile
+            )
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, imageUri)
+                putExtra(Intent.EXTRA_TITLE, title)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, title))
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "Unable to share progress image", Toast.LENGTH_LONG).show()
+        }
+    }
+
     inner class WebAppInterface(private val context: Context) {
         @JavascriptInterface
         fun saveBackup(data: String, filename: String) {
@@ -458,6 +540,13 @@ class MainActivity : AppCompatActivity() {
         fun syncReminderSnapshot(snapshotJson: String) {
             ReminderScheduler.saveSnapshot(context, snapshotJson)
             ReminderScheduler.scheduleFromSnapshot(context, snapshotJson)
+        }
+
+        @JavascriptInterface
+        fun shareImage(base64Png: String, filename: String, title: String) {
+            runOnUiThread {
+                sharePngImage(base64Png, filename, title)
+            }
         }
     }
 

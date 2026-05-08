@@ -79,6 +79,7 @@
   type AndroidBridge = {
     saveBackup?: (data: string, filename: string) => void;
     importBackup?: () => void;
+    shareImage?: (base64Png: string, filename: string, title: string) => void;
   };
 
   type FilePickerWindow = Window & typeof globalThis & {

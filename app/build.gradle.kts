@@ -28,7 +28,7 @@ android {
         applicationId = "com.fitnessmomentum"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10700
+        versionCode = 10800
         versionName = frontendVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -49,6 +49,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Allow debug and production builds to coexist on the same device.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
+
         release {
             val releaseSigning = signingConfigs.getByName("release")
             if (releaseSigning.storeFile != null) {

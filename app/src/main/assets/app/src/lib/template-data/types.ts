@@ -1,6 +1,6 @@
 import type { Workout } from '../types';
 
-export type WorkoutTemplate = Pick<
+type WorkoutTemplateFields = Pick<
   Workout,
   | 'name'
   | 'baseVolume'
@@ -11,8 +11,11 @@ export type WorkoutTemplate = Pick<
   | 'targetFrequency'
   | 'workoutType'
   | 'distanceInputMode'
-> & {
+>;
+
+export interface WorkoutTemplate extends WorkoutTemplateFields {
   icon?: string;
+  variants?: WorkoutTemplate[];
   tags?: ReadonlySet<string>;
-};
+}
 

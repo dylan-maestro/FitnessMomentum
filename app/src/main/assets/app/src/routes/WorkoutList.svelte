@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { workouts } from '$lib/stores';
   import { addWorkout, deleteWorkout, processDailyDecay } from '$lib/storage';
-  import { showToast } from '$lib/stores';
+  import { showToast, settings } from '$lib/stores';
   import {
     currentDate,
     currentTimestamp,
@@ -17,9 +17,10 @@
   import RemindersModal from './RemindersModal.svelte';
   import TemplateSelectionModal from './TemplateSelectionModal.svelte';
   import type { Workout } from '$lib/types';
-  import { WORKOUT_TEMPLATES, type WorkoutTemplate } from '$lib/templates';
+  import { ALL_WORKOUT_TEMPLATES, type WorkoutTemplate } from '$lib/templates';
   import { DECAY_RATE_PER_DAY } from '$lib/momentum';
   import { getDefaultMomentumFactor, type WorkoutType } from '$lib/workoutTypes';
+  import { shareWorkoutBundleProgress } from '$lib/shareProgress';
   import AppIconSvg from '../../icon-source/app-icon.svg?raw';
 
   let showModal = false;
@@ -61,13 +62,12 @@
   };
   const fallbackIcon = (AppIconSvg ?? '').trim();
   const templateIconMap = new Map(
-    WORKOUT_TEMPLATES.map((template) => [template.name.trim(), (template.icon ?? '').trim()])
+    ALL_WORKOUT_TEMPLATES.map((template) => [template.name.trim(), (template.icon ?? '').trim()])
   );
   const workoutCardNodes = new Map<string, HTMLElement>();
   let navigatorTrack: HTMLDivElement | null = null;
   let navigatorCards: NavigatorCard[] = [];
   let navigatorVisible = false;
-  let navigatorHover = false;
   let navigatorDragging = false;
   let activeWorkoutId: string | null = null;
   let viewportThumbTop = 0;
@@ -76,7 +76,6 @@
   let dragPointerId: number | null = null;
   let navigatorSignature = '';
   let activeWorkoutName = 'Exercises';
-  let activeWorkoutStackRatio = 0.5;
 
   function clamp(value: number, min: number, max: number): number {
     return Math.min(Math.max(value, min), max);
@@ -90,6 +89,32 @@
     const trimmedName = name.trim();
     const iconMarkup = templateIconMap.get(trimmedName);
     return iconMarkup && iconMarkup.length > 0 ? iconMarkup : fallbackIcon;
+  }
+
+  function normalizeExerciseName(value: string): string {
+    return value.trim().toLocaleLowerCase();
+  }
+
+  function findWorkoutByName(name: string): Workout | undefined {
+    const normalizedName = normalizeExerciseName(name);
+    return $workouts.find((workout) => normalizeExerciseName(workout.name) === normalizedName);
+  }
+
+  function getTemplateCopyName(templateName: string): string {
+    const copyName = `${templateName} (Copy)`;
+
+    if (!findWorkoutByName(copyName)) {
+      return copyName;
+    }
+
+    let copyNumber = 2;
+    let candidateName = `${templateName} (Copy ${copyNumber})`;
+    while (findWorkoutByName(candidateName)) {
+      copyNumber += 1;
+      candidateName = `${templateName} (Copy ${copyNumber})`;
+    }
+
+    return candidateName;
   }
 
   function getDocumentHeight(): number {
@@ -201,8 +226,8 @@
   }
 
   function handleNavigatorPointerDown(event: PointerEvent) {
+    (event.currentTarget as HTMLElement).focus();
     navigatorDragging = true;
-    navigatorHover = true;
     dragPointerId = event.pointerId;
     navigatorTrack?.setPointerCapture(event.pointerId);
     scrollFromNavigatorPosition(event.clientY);
@@ -226,7 +251,6 @@
     navigatorTrack?.releasePointerCapture(event.pointerId);
     navigatorDragging = false;
     dragPointerId = null;
-    navigatorHover = event.pointerType === 'mouse';
   }
 
   function handleNavigatorKeydown(event: KeyboardEvent) {
@@ -300,8 +324,6 @@
   }
 
   $: activeWorkoutName = navigatorCards.find((card) => card.id === activeWorkoutId)?.name ?? 'Exercises';
-  $: activeWorkoutStackRatio =
-    navigatorCards.find((card) => card.id === activeWorkoutId)?.stackRatio ?? 0.5;
 
   onMount(() => {
     // Keep the same top-level app chrome in both the PWA and Android WebView shell.
@@ -349,6 +371,18 @@
 
   function handleTemplateQuickAdd(event: CustomEvent<WorkoutTemplate>) {
     const template = event.detail;
+    const existingWorkout = findWorkoutByName(template.name);
+
+    if (existingWorkout) {
+      editingWorkout = {
+        ...template,
+        name: getTemplateCopyName(template.name)
+      };
+      showTemplateModal = false;
+      showModal = true;
+      return;
+    }
+
     const baseVolume = Math.max(0, Number(template.baseVolume) || 0);
     const decay = DECAY_RATE_PER_DAY;
     const frequency = Math.max(1, Math.round(Number(template.targetFrequency) || 1));
@@ -399,6 +433,29 @@
     showHelpPage = true;
   }
 
+  async function handleShareAll() {
+    if ($workouts.length === 0) {
+      showToast('Add an exercise before sharing progress');
+      return;
+    }
+
+    try {
+      const result = await shareWorkoutBundleProgress({
+        workouts: $workouts,
+        settings: $settings,
+        shareDate: $currentDate
+      });
+      if (result === 'downloaded') {
+        showToast('Progress image downloaded');
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
+      showToast(error instanceof Error ? error.message : 'Unable to share progress image');
+    }
+  }
+
   function handleEdit(event: CustomEvent<Workout>) {
     const { detail } = event;
     editingWorkout = { ...detail };
@@ -412,8 +469,20 @@
     }
   }
 
+  function handleModalDelete(event: CustomEvent<string>) {
+    deleteWorkout(event.detail);
+    showToast('Workout deleted');
+    showModal = false;
+    editingWorkout = null;
+  }
+
   function handleSave(event: CustomEvent<WorkoutDraft>) {
     const workoutData = event.detail;
+    if (findWorkoutByName(workoutData.name)) {
+      showToast('An exercise with this name already exists');
+      return;
+    }
+
     addWorkout(workoutData);
     showToast('Workout created');
     showModal = false;
@@ -511,7 +580,29 @@
   {/if}
 
   <header class="header">
-    <h1>Exercises</h1>
+    <div class="heading-row">
+      <h1>Exercises</h1>
+      <button
+        type="button"
+        class="icon-button heading-share-button"
+        on:click={handleShareAll}
+        aria-label="Share all exercise progress"
+        title="Share all exercise progress"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="6" cy="12" r="2.3" />
+          <circle cx="17.5" cy="5.5" r="2.3" />
+          <circle cx="17.5" cy="18.5" r="2.3" />
+          <path
+            d="M8.05 10.85 15.45 6.7M8.05 13.15l7.4 4.15"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.9"
+            stroke-linecap="round"
+          />
+        </svg>
+      </button>
+    </div>
     <div class="header-actions">
       {#if !showWebAppBar}
         <button class="icon-button" on:click={handleHelp} aria-label="Help">
@@ -607,7 +698,6 @@
   {#if navigatorVisible && !showModal && !showTemplateModal && !showHelpPage && !showSettingsModal}
     <div
       class="mini-navigator"
-      class:navigator-interactive={navigatorHover || navigatorDragging}
       class:navigator-dragging={navigatorDragging}
       role="slider"
       tabindex="0"
@@ -617,27 +707,12 @@
       aria-valuemax={Math.max(navigatorCards.length - 1, 0)}
       aria-valuenow={Math.max(navigatorCards.findIndex((card) => card.id === activeWorkoutId), 0)}
       aria-valuetext={activeWorkoutName}
-      on:mouseenter={() => (navigatorHover = true)}
-      on:mouseleave={() => {
-        if (!navigatorDragging) {
-          navigatorHover = false;
-        }
-      }}
-      on:focus={() => (navigatorHover = true)}
-      on:blur={() => {
-        if (!navigatorDragging) {
-          navigatorHover = false;
-        }
-      }}
       on:pointerdown={handleNavigatorPointerDown}
       on:pointermove={handleNavigatorPointerMove}
       on:pointerup={handleNavigatorPointerUp}
       on:pointercancel={handleNavigatorPointerUp}
       on:keydown={handleNavigatorKeydown}
     >
-      <div class="mini-navigator__title" style={`top: ${activeWorkoutStackRatio * 100}%;`}>
-        {activeWorkoutName}
-      </div>
       <div class="mini-navigator__track" bind:this={navigatorTrack}>
         <div class="mini-navigator__spine"></div>
         <div
@@ -654,6 +729,7 @@
             on:pointerdown|stopPropagation
             on:click|stopPropagation={() => scrollToWorkout(card.id)}
           >
+            <span class="mini-navigator__label">{card.name}</span>
             <span class="mini-navigator__icon-art" aria-hidden="true">
               {@html card.iconMarkup}
             </span>
@@ -666,8 +742,11 @@
   {#if showModal}
     <WorkoutModal
       workout={editingWorkout}
+      existingWorkouts={$workouts}
+      focusNameOnOpen={Boolean(editingWorkout && !editingWorkout.id)}
       on:save={handleSave}
       on:close={handleClose}
+      on:delete={handleModalDelete}
     />
   {/if}
 
@@ -746,6 +825,16 @@
   .header h1 {
     font-size: 2rem;
     color: #333;
+  }
+
+  .heading-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+  }
+
+  .heading-share-button {
+    padding: 0.58rem;
   }
 
   .header-actions {
@@ -901,7 +990,7 @@
     right: calc(0.3rem + env(safe-area-inset-right, 0px));
     transform: translateY(-50%);
     z-index: 40;
-    opacity: 0.4;
+    opacity: 1;
     user-select: none;
     touch-action: none;
     transition:
@@ -914,20 +1003,89 @@
     outline-offset: 3px;
   }
 
-  .navigator-interactive {
-    opacity: 1;
-    transform: translateY(-50%) scale(1.02);
-  }
-
   .navigator-dragging {
     transform: translateY(-50%) scale(1.04);
   }
 
-  .mini-navigator__title {
+  .mini-navigator__track {
+    position: relative;
+    width: 2.1rem;
+    height: min(58vh, 24rem);
+    min-height: 9rem;
+    overflow: visible;
+    transition:
+      width 0.2s ease,
+      transform 0.2s ease;
+  }
+
+  .mini-navigator__spine,
+  .mini-navigator__viewport,
+  .mini-navigator__icon {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .mini-navigator__spine {
+    top: 0;
+    width: 3px;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(36, 62, 81, 0.16), rgba(36, 62, 81, 0.28));
+    transition:
+      width 0.2s ease,
+      opacity 0.2s ease;
+  }
+
+  .mini-navigator__viewport {
+    width: 1rem;
+    min-height: 1.35rem;
+    border-radius: 999px;
+    background: rgba(54, 88, 109, 0.14);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+    opacity: 0.95;
+    transition:
+      width 0.2s ease,
+      opacity 0.2s ease;
+  }
+
+  .mini-navigator__icon {
+    top: 50%;
+    width: 1.35rem;
+    height: 1.35rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: rgba(36, 62, 81, 0.78);
+    border-radius: 5px;
+    cursor: pointer;
+    transform: translate(-50%, -50%) scale(1);
+    transform-origin: center;
+    transition:
+      color 0.2s ease,
+      transform 0.2s ease,
+      filter 0.2s ease,
+      opacity 0.2s ease;
+  }
+
+  .mini-navigator__icon:hover {
+    color: rgba(36, 62, 81, 0.9);
+  }
+
+  .mini-navigator__icon-active {
+    color: var(--color-primary);
+    transform: translate(-50%, -50%) scale(1.22);
+    filter: drop-shadow(0 4px 12px rgba(36, 62, 81, 0.22));
+  }
+
+  .mini-navigator__label {
     position: absolute;
     top: 50%;
     right: calc(100% + 0.55rem);
+    max-width: 12rem;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-size: 0.82rem;
     font-weight: 700;
     color: var(--color-primary);
@@ -942,104 +1100,9 @@
       transform 0.2s ease;
   }
 
-  .navigator-interactive .mini-navigator__title {
+  .mini-navigator:focus-within .mini-navigator__label {
     opacity: 1;
     transform: translateY(-50%) translateX(0);
-  }
-
-  .mini-navigator__track {
-    position: relative;
-    width: 1.55rem;
-    height: min(58vh, 24rem);
-    min-height: 9rem;
-    overflow: visible;
-    transition:
-      width 0.2s ease,
-      transform 0.2s ease;
-  }
-
-  .navigator-interactive .mini-navigator__track {
-    width: 2.1rem;
-  }
-
-  .mini-navigator__spine,
-  .mini-navigator__viewport,
-  .mini-navigator__icon {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%);
-  }
-
-  .mini-navigator__spine {
-    top: 0;
-    width: 2px;
-    height: 100%;
-    border-radius: 999px;
-    background: linear-gradient(180deg, rgba(36, 62, 81, 0.16), rgba(36, 62, 81, 0.28));
-    transition:
-      width 0.2s ease,
-      opacity 0.2s ease;
-  }
-
-  .navigator-interactive .mini-navigator__spine {
-    width: 3px;
-  }
-
-  .mini-navigator__viewport {
-    width: 0.7rem;
-    min-height: 1.35rem;
-    border-radius: 999px;
-    background: rgba(54, 88, 109, 0.14);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
-    opacity: 0.75;
-    transition:
-      width 0.2s ease,
-      opacity 0.2s ease;
-  }
-
-  .navigator-interactive .mini-navigator__viewport {
-    width: 1rem;
-    opacity: 0.95;
-  }
-
-  .mini-navigator__icon {
-    top: 50%;
-    width: 1.15rem;
-    height: 1.15rem;
-    padding: 0;
-    border: none;
-    background: transparent;
-    color: rgba(36, 62, 81, 0.55);
-    border-radius: 5px;
-    cursor: pointer;
-    transform: translate(-50%, -50%) scale(0.88);
-    transform-origin: center;
-    transition:
-      color 0.2s ease,
-      transform 0.2s ease,
-      filter 0.2s ease,
-      opacity 0.2s ease;
-  }
-
-  .navigator-interactive .mini-navigator__icon {
-    width: 1.35rem;
-    height: 1.35rem;
-    transform: translate(-50%, -50%) scale(1);
-    color: rgba(36, 62, 81, 0.78);
-  }
-
-  .mini-navigator__icon:hover {
-    color: rgba(36, 62, 81, 0.9);
-  }
-
-  .mini-navigator__icon-active {
-    color: var(--color-primary);
-    transform: translate(-50%, -50%) scale(1.14);
-    filter: drop-shadow(0 4px 12px rgba(36, 62, 81, 0.22));
-  }
-
-  .navigator-interactive .mini-navigator__icon-active {
-    transform: translate(-50%, -50%) scale(1.22);
   }
 
   .mini-navigator__icon-art {
@@ -1067,7 +1130,7 @@
       height: min(52vh, 20rem);
     }
 
-    .mini-navigator__title {
+    .mini-navigator__label {
       font-size: 0.76rem;
       right: calc(100% + 0.4rem);
     }

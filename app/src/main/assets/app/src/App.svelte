@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { toastMessage } from '$lib/stores';
   import { loadWorkouts } from '$lib/storage';
   import { initReminderRuntime } from '$lib/reminderRuntime';
@@ -8,8 +8,27 @@
   import Toast from '$lib/components/Toast.svelte';
 
   let loading = true;
+  let removeViewportListeners: (() => void) | null = null;
+
+  function updateAppHeight() {
+    const height = window.visualViewport?.height ?? window.innerHeight;
+    document.documentElement.style.setProperty('--app-height', `${height}px`);
+  }
 
   onMount(async () => {
+    const viewport = window.visualViewport;
+    const handleResize = () => updateAppHeight();
+
+    updateAppHeight();
+    window.addEventListener('resize', handleResize);
+    viewport?.addEventListener('resize', handleResize);
+    viewport?.addEventListener('scroll', handleResize);
+    removeViewportListeners = () => {
+      window.removeEventListener('resize', handleResize);
+      viewport?.removeEventListener('resize', handleResize);
+      viewport?.removeEventListener('scroll', handleResize);
+    };
+
     try {
       await loadWorkouts();
       initReminderRuntime();
@@ -18,6 +37,11 @@
       console.error('Failed to load workouts:', error);
       loading = false;
     }
+  });
+
+  onDestroy(() => {
+    removeViewportListeners?.();
+    removeViewportListeners = null;
   });
 </script>
 
@@ -66,8 +90,14 @@
     line-height: 1.6;
   }
 
+  :global(html),
+  :global(body),
+  :global(#app) {
+    min-height: var(--app-height, 100dvh);
+  }
+
   .app-container {
-    min-height: 100vh;
+    min-height: var(--app-height, 100dvh);
     padding:
       1rem
       calc(1rem + var(--android-safe-area-right, env(safe-area-inset-right, 0px)))

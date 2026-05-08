@@ -339,8 +339,8 @@
 
     .help-page {
       max-width: none;
-      max-height: 100vh;
-      height: 100vh;
+      max-height: var(--app-height, 100dvh);
+      height: var(--app-height, 100dvh);
       border-radius: 0;
     }
 

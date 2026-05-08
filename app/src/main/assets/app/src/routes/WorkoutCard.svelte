@@ -17,8 +17,9 @@
     toMetricWeight,
   } from "$lib/units";
   import MomentumHistoryModal from "$lib/components/MomentumHistoryModal.svelte";
-  import { WORKOUT_TEMPLATES } from "$lib/templates";
+  import { ALL_WORKOUT_TEMPLATES } from "$lib/templates";
   import { getGoalProgress } from "$lib/goalProgress";
+  import { shareWorkoutProgress } from "$lib/shareProgress";
   import AppIconSvg from "../../icon-source/app-icon.svg?raw";
 
   type WorkoutWithBase = Workout & { baseVolume?: number };
@@ -53,7 +54,6 @@
   let weightAdjusterOffsetY = 0;
   let recommendedReps = 0;
   let unitLabel: "kg" | "lb" = "kg";
-  let showDetails = false;
   let showHistoryModal = false;
   let showPeakCelebration = false;
   let peakCelebrationTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -88,7 +88,7 @@
   };
   const fallbackIcon = (AppIconSvg ?? "").trim();
   const templateIconMap = new Map(
-    WORKOUT_TEMPLATES.map((template) => [
+    ALL_WORKOUT_TEMPLATES.map((template) => [
       template.name.trim(),
       (template.icon ?? "").trim(),
     ]),
@@ -444,6 +444,10 @@
     return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   }
 
+  function formatLogInputValue(value: number): string {
+    return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+
   function formatTimeVolume(value: number, unit: "kg" | "lb"): string {
     const converted = fromMetricWeight(value, unit) / 60;
     return converted.toLocaleString(undefined, {
@@ -507,14 +511,6 @@
         : unitLabel;
   $: timeVolumeUnitLabel = `${unitLabel}.min`;
   $: distanceInputMode = localWorkout.distanceInputMode ?? "simple";
-  $: logButtonLabel =
-    workoutType === "distance"
-      ? distanceInputMode === "laps"
-        ? "Log Laps"
-        : "Log Distance"
-      : workoutType === "time"
-        ? "Log Time"
-        : "Log Reps";
 
   // Reactive derivations for progress tracking
   $: today = $currentDate;
@@ -649,7 +645,31 @@
   $: hasValidPrimaryInput =
     workoutType === "time"
       ? parseMicrowaveTimeInput(repsInput) > 0
-      : repsInput.trim().length > 0;
+      : Number(repsInput) > 0;
+  $: parsedLogValue =
+    workoutType === "distance" && distanceInputMode === "laps"
+      ? Number(lapsInput)
+      : workoutType === "time"
+        ? parseMicrowaveTimeInput(repsInput)
+        : Number(repsInput);
+  $: hasValidLogValue = Number.isFinite(parsedLogValue) && parsedLogValue > 0;
+  $: canLogVolume = hasValidPrimaryInput && hasValidLogValue;
+  $: logButtonLabel =
+    workoutType === "distance"
+      ? distanceInputMode === "laps"
+        ? hasValidLogValue
+          ? `Log ${formatLogInputValue(parsedLogValue)} Laps`
+          : "Enter laps to log more ⤴"
+        : hasValidLogValue
+          ? `Log ${formatLogInputValue(parsedLogValue)} ${distanceUnitLabel}`
+          : "Enter distance to log more ⤴"
+      : workoutType === "time"
+        ? hasValidLogValue
+          ? `Log ${formatTimeValue(Math.round(parsedLogValue))}`
+          : "Enter time to log more ⤴"
+        : hasValidLogValue
+          ? `Log ${formatLogInputValue(parsedLogValue)} Reps`
+          : "Enter reps to log more ⤴";
 
   $: if (!hasManualReps) {
     if (workoutType === "distance" && distanceInputMode === "laps") {
@@ -1199,8 +1219,22 @@
     dispatch("edit", localWorkout);
   }
 
-  function handleDelete() {
-    dispatch("delete");
+  async function handleShare() {
+    try {
+      const result = await shareWorkoutProgress({
+        workout: localWorkout,
+        settings: $settings,
+        shareDate: $currentDate,
+      });
+      if (result === "downloaded") {
+        showToast("Progress image downloaded");
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return;
+      }
+      showToast(error instanceof Error ? error.message : "Unable to share progress image");
+    }
   }
 
   function handleWeightChange(event: Event) {
@@ -1221,6 +1255,39 @@
 </script>
 
 <div class="workout-card">
+  <button
+    type="button"
+    class="card-corner-button share-card-button"
+    aria-label={`Share ${localWorkout.name} progress`}
+    title="Share progress"
+    on:click|stopPropagation={handleShare}
+  >
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="6" cy="12" r="2.3" />
+      <circle cx="17.5" cy="5.5" r="2.3" />
+      <circle cx="17.5" cy="18.5" r="2.3" />
+      <path
+        d="M8.05 10.85 15.45 6.7M8.05 13.15l7.4 4.15"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.9"
+        stroke-linecap="round"
+      />
+    </svg>
+  </button>
+  <button
+    type="button"
+    class="card-corner-button edit-card-button"
+    aria-label={`Edit ${localWorkout.name}`}
+    title="Edit exercise"
+    on:click|stopPropagation={handleEdit}
+  >
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M4.5 16.9 16.7 4.7a2 2 0 0 1 2.8 0l.8.8a2 2 0 0 1 0 2.8L8.1 20.5H4.5v-3.6Zm2 1.6h.8L18.9 6.9l-.8-.8L6.5 17.7v.8Z"
+      />
+    </svg>
+  </button>
   <div class="header-row">
     <div class="header-main">
       <div class="header-top">
@@ -1501,7 +1568,7 @@
     <button
       class="log-button"
       on:click={handleLogVolume}
-      disabled={isLogging || !hasValidPrimaryInput}
+      disabled={isLogging || !canLogVolume}
     >
       {#if isLogging}
         Logging...
@@ -1511,48 +1578,6 @@
     </button>
   </div>
 
-  <div class="footer-section">
-    <button
-      type="button"
-      class="details-toggle"
-      on:click={() => (showDetails = !showDetails)}
-    >
-      {showDetails ? "Hide details" : "Details & advanced"}
-      <span class="arrow" aria-hidden="true">{showDetails ? "▲" : "▼"}</span>
-    </button>
-
-    {#if showDetails}
-      <div class="details-panel">
-        <div class="detail-row">
-          <span>Target increase</span>
-          <span class="mono"
-            >{((localWorkout.targetIncreasePercentage ?? 0) * 100).toFixed(
-              2,
-            )}%</span
-          >
-        </div>
-        <div class="detail-row">
-          <span>Base volume</span>
-          <span class="mono"
-            >{localWorkout.baseVolume != null
-              ? `${workoutType === "distance"
-                ? fromMetricDistance(localWorkout.baseVolume, distanceUnitLabel).toLocaleString(undefined, { maximumFractionDigits: 2 })
-                : workoutType === "time"
-                  ? formatTimeVolume(localWorkout.baseVolume, unitLabel)
-                  : fromMetricWeight(localWorkout.baseVolume, unitLabel).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${workoutType === "time" ? timeVolumeUnitLabel : displayUnitLabel}`
-              : "—"}</span
-          >
-        </div>
-        <div class="actions-row">
-          <button class="text-btn edit" on:click={handleEdit}
-            >Edit workout</button
-          >
-          <button class="text-btn delete" on:click={handleDelete}>Delete</button
-          >
-        </div>
-      </div>
-    {/if}
-  </div>
 </div>
 
 {#if showHistoryModal}
@@ -1570,10 +1595,60 @@
     flex-direction: column;
     gap: 1.5rem;
     container-type: inline-size;
+    position: relative;
   }
 
   .workout-card:hover {
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  }
+
+  .card-corner-button {
+    position: absolute;
+    top: 0.35rem;
+    z-index: 3;
+    width: 2.2rem;
+    height: 2.2rem;
+    border: 1px solid rgba(36, 62, 81, 0.03);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.29);
+    color: #546e7a9b;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition:
+      background 0.2s,
+      color 0.2s,
+      transform 0.2s,
+      box-shadow 0.2s;
+  }
+
+  .share-card-button {
+    left: 0.35rem;
+  }
+
+  .edit-card-button {
+    right: 0.35rem;
+  }
+
+  .card-corner-button svg {
+    width: 1.15rem;
+    height: 1.15rem;
+    fill: currentColor;
+  }
+
+  .card-corner-button:hover {
+    background: white;
+    color: #1976d2;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(38, 50, 56, 0.18);
+  }
+
+  .card-corner-button:focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 3px rgba(66, 165, 245, 0.25),
+      0 4px 12px rgba(38, 50, 56, 0.18);
   }
 
   .header-row {
@@ -2088,90 +2163,6 @@
   .log-button:disabled {
     background: #bdbdbd;
     cursor: not-allowed;
-  }
-
-  .footer-section {
-    border-top: 1px solid #eceff1;
-    padding-top: 0.5rem;
-  }
-
-  .details-toggle {
-    width: 100%;
-    border: none;
-    background: transparent;
-    color: #78909c;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    font-size: 0.75rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.35rem;
-    cursor: pointer;
-    padding: 0.25rem 0;
-  }
-
-  .details-toggle:hover {
-    color: #546e7a;
-  }
-
-  .details-panel {
-    margin-top: 0.75rem;
-    border-radius: 10px;
-    background: #f9fafb;
-    padding: 0.75rem 1rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    font-size: 0.9rem;
-    color: #455a64;
-  }
-
-  .detail-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-bottom: 0.35rem;
-    border-bottom: 1px dotted #e0e0e0;
-  }
-
-  .detail-row:last-of-type {
-    border-bottom: none;
-    padding-bottom: 0;
-  }
-
-  .mono {
-    font-family: "Roboto Mono", "SFMono-Regular", Consolas, monospace;
-    color: #263238;
-  }
-
-  .actions-row {
-    display: flex;
-    justify-content: flex-end;
-    gap: 1rem;
-    margin-top: 0.5rem;
-  }
-
-  .text-btn {
-    border: none;
-    background: none;
-    font-size: 0.9rem;
-    font-weight: 600;
-    cursor: pointer;
-    padding: 0;
-  }
-
-  .text-btn.edit {
-    color: #1976d2;
-  }
-
-  .text-btn.delete {
-    color: #d32f2f;
-  }
-
-  .text-btn:hover {
-    text-decoration: underline;
   }
 
   @container (max-width: 380px) {

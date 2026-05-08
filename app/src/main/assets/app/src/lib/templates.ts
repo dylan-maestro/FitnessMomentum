@@ -20,7 +20,12 @@ export type { WorkoutTemplate };
 
 const withDefaultTags = (template: WorkoutTemplate): WorkoutTemplate => ({
   ...template,
-  tags: new Set([...(template.tags ?? []), 'common'])
+  tags: new Set([...(template.tags ?? []), 'common']),
+  variants: template.variants?.map((variant) => ({
+    ...variant,
+    icon: variant.icon ?? template.icon,
+    tags: new Set([...(variant.tags ?? template.tags ?? []), 'common'])
+  }))
 });
 
 export const WORKOUT_TEMPLATES: WorkoutTemplate[] = [
@@ -41,3 +46,8 @@ export const WORKOUT_TEMPLATES: WorkoutTemplate[] = [
   swimmingLapsTemplate,
   walkingLungesTemplate,
 ].map(withDefaultTags);
+
+export const ALL_WORKOUT_TEMPLATES: WorkoutTemplate[] = WORKOUT_TEMPLATES.flatMap((template) => [
+  template,
+  ...(template.variants ?? [])
+]);
